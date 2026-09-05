@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.6.0
+// @version      1.7.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -164,10 +164,12 @@
 
     const available = Math.max(0, state.pop - Object.values(state.jobs || {})
       .reduce((sum, n) => sum + (Number(n) || 0), 0));
+    const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0);
+    const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
+    const underMinimum = minimums.find(([id, minimum]) =>
+      minimum > 0 && assignable.includes(id) && count(id) < minimum);
+    const target = underMinimum?.[0] || targetForNeed || balancedJob;
     if (available > 0) {
-      const underMinimum = minimums.find(([id, minimum]) =>
-        minimum > 0 && assignable.includes(id) && count(id) < minimum);
-      const target = underMinimum?.[0] || targetForNeed;
       if (target) invoke('assign', target, 1);
       return;
     }
@@ -176,14 +178,12 @@
     // when all stores have enough coverage. Never take a minimum job below its
     // floor, and prefer removing the largest surplus first.
     const donors = Object.keys(state.jobs || {})
-      .filter(id => id !== targetForNeed && count(id) > minimum(id))
+      .filter(id => id !== target && count(id) > minimum(id))
       .sort((a, b) => (count(b) - minimum(b)) - (count(a) - minimum(a)));
     const donor = donors[0];
-    if (donor && targetForNeed) {
+    if (donor && target) {
       invoke('assign', donor, -1);
-      invoke('assign', targetForNeed, 1);
-    } else if (donor && !need) {
-      invoke('assign', donor, -1);
+      invoke('assign', target, 1);
     }
   }
 
