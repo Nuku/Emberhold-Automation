@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.3.0
+// @version      1.4.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -234,7 +234,8 @@
   function autoExpeditions(state, demand) {
     const defs = definitions().EXPEDITIONS || [];
     for (const def of defs) {
-      if (!state.expeditions[def.id] && (!def.landing || def.landing === state.landing) &&
+      const queued = (state.queues?.expedition || []).some(entry => entry.id === def.id);
+      if (!state.expeditions[def.id] && !queued && (!def.landing || def.landing === state.landing) &&
           state.pop >= def.reqPop && affordable(def.cost, state, demand)) {
         invoke('expedition', def.id);
         return;
