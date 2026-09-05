@@ -188,6 +188,7 @@
   function autoDiplomacy(state) {
     for (const [id, entry] of Object.entries(state.diplomacy || {})) {
       const request = entry.request;
+      if (entry.disposition >= 100) continue;
       if (request && affordable({ [request.res]: request.amount }, state)) {
         invoke('supplyDiplomacyRequest', id);
         return;
