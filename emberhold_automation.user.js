@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.2.0
+// @version      1.3.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -66,8 +66,13 @@
     return true;
   }
 
-  function affordable(cost, state) {
-    return Object.entries(cost || {}).every(([id, amount]) => (state.res[id] || 0) >= amount);
+  function affordable(cost, state, demand = {}) {
+    return Object.entries(cost || {}).every(([id, amount]) =>
+      Math.max(0, (state.res[id] || 0) - (demand[id] || 0)) >= amount);
+  }
+
+  function queuedDemand() {
+    return api().helpers?.queueDemand?.() || {};
   }
 
   function unlocked(def, state) {
@@ -106,7 +111,7 @@
     'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
   ];
 
-  function autoJobs(state) {
+  function autoJobs(state, demand) {
     const defs = definitions().JOBS || {};
     const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]));
     if (!assignable.length) return;
@@ -142,8 +147,10 @@
     if (available > 0) {
       // Keep the first two needs covered, then concentrate workers on the
       // highest unlocked job. The engine rejects unavailable assignments.
-      const priority = state.res.food < 40 ? ['forager', 'woodcutter'] :
-        state.res.wood < 30 ? ['woodcutter', 'forager'] :
+      const food = Math.max(0, (state.res.food || 0) - (demand.food || 0));
+      const wood = Math.max(0, (state.res.wood || 0) - (demand.wood || 0));
+      const priority = food < 40 ? ['forager', 'woodcutter'] :
+        wood < 30 ? ['woodcutter', 'forager'] :
           ['thinker', 'miner', 'woodcutter', 'forager'];
       const target = priority.find(id => assignable.includes(id)) || assignable[0];
       invoke('assign', target, 1);
@@ -152,82 +159,83 @@
 
     // Move one worker when a store is in danger. This keeps the loop gentle
     // and avoids oscillating every worker on every pass.
-    if (state.res.food < 15) {
+    if (Math.max(0, (state.res.food || 0) - (demand.food || 0)) < 15) {
       const donor = Object.keys(state.jobs || {}).find(id => id !== 'forager' && state.jobs[id] > 0);
       if (donor) { invoke('assign', donor, -1); invoke('assign', 'forager', 1); }
     }
   }
 
-  function autoResearch(state) {
+  function autoResearch(state, demand) {
     const defs = definitions().TECHS || [];
     for (const id of RESEARCH_ORDER) {
       const def = defs.find(item => item.id === id);
-      if (def && !state.techs[id] && unlocked(def, state) && state.res.knowledge >= def.cost) {
+      if (def && !state.techs[id] && unlocked(def, state) &&
+          affordable({ knowledge: def.cost }, state, demand)) {
         invoke('research', id);
         return;
       }
     }
   }
 
-  function autoBuildings(state) {
+  function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
     for (const id of BUILD_ORDER) {
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
       const cost = typeof api().helpers?.buildingCost === 'function'
         ? api().helpers.buildingCost(def) : def.cost;
-      if (craftMissingFor(cost, state)) return;
-      if (affordable(cost, state)) {
+      if (craftMissingFor(cost, state, demand)) return;
+      if (affordable(cost, state, demand)) {
         invoke('build', id);
         return;
       }
     }
   }
 
-  function craftMissingFor(cost, state, seen = new Set()) {
+  function craftMissingFor(cost, state, demand, seen = new Set()) {
     const defs = definitions().CRAFTS || [];
     for (const [resource, amount] of Object.entries(cost || {})) {
-      if ((state.res[resource] || 0) >= amount) continue;
+      if (Math.max(0, (state.res[resource] || 0) - (demand[resource] || 0)) >= amount) continue;
       const recipe = defs.find(def => def.give?.[resource] && unlocked(def, state));
       if (!recipe || seen.has(recipe.id)) continue;
       const nextSeen = new Set(seen).add(recipe.id);
       const missingInput = Object.entries(recipe.cost || {})
-        .find(([input, inputAmount]) => (state.res[input] || 0) < inputAmount);
-      if (missingInput && craftMissingFor({ [missingInput[0]]: missingInput[1] }, state, nextSeen)) return true;
-      if (!missingInput && affordable(recipe.cost, state)) {
+        .find(([input, inputAmount]) => Math.max(0, (state.res[input] || 0) - (demand[input] || 0)) < inputAmount);
+      if (missingInput && craftMissingFor({ [missingInput[0]]: missingInput[1] }, state, demand, nextSeen)) return true;
+      if (!missingInput && affordable(recipe.cost, state, demand)) {
         return invoke('craft', recipe.id);
       }
     }
     return false;
   }
 
-  function autoCraft(state) {
+  function autoCraft(state, demand) {
     // Crafting is demand-driven: autoBuildings handles the next build's
     // craftable dependencies. This fallback keeps manually selected recipes
     // moving once their inputs are available without stockpiling everything.
     const defs = definitions().CRAFTS || [];
-    const target = defs.find(def => unlocked(def, state) && affordable(def.cost, state) &&
+    const target = defs.find(def => unlocked(def, state) && affordable(def.cost, state, demand) &&
       Object.entries(def.give || {}).some(([id, amount]) =>
         (state.res[id] || 0) < amount));
     if (target) invoke('craft', target.id);
   }
 
-  function autoDiplomacy(state) {
+  function autoDiplomacy(state, demand) {
     for (const [id, entry] of Object.entries(state.diplomacy || {})) {
       const request = entry.request;
       if (entry.disposition >= 100) continue;
-      if (request && affordable({ [request.res]: request.amount }, state)) {
+      if (request && affordable({ [request.res]: request.amount }, state, demand)) {
         invoke('supplyDiplomacyRequest', id);
         return;
       }
     }
   }
 
-  function autoExpeditions(state) {
+  function autoExpeditions(state, demand) {
     const defs = definitions().EXPEDITIONS || [];
     for (const def of defs) {
       if (!state.expeditions[def.id] && (!def.landing || def.landing === state.landing) &&
-          state.pop >= def.reqPop && affordable(def.cost, state)) {
+          state.pop >= def.reqPop && affordable(def.cost, state, demand)) {
         invoke('expedition', def.id);
         return;
       }
@@ -240,12 +248,13 @@
     try {
       const state = snapshot();
       if (!state) return;
-      if (settings.jobs) autoJobs(state);
-      if (settings.research) autoResearch(state);
-      if (settings.buildings) autoBuildings(state);
-      if (settings.crafting) autoCraft(state);
-      if (settings.diplomacy) autoDiplomacy(state);
-      if (settings.expeditions) autoExpeditions(state);
+      const demand = queuedDemand();
+      if (settings.jobs) autoJobs(state, demand);
+      if (settings.research) autoResearch(state, demand);
+      if (settings.buildings) autoBuildings(state, demand);
+      if (settings.crafting) autoCraft(state, demand);
+      if (settings.diplomacy) autoDiplomacy(state, demand);
+      if (settings.expeditions) autoExpeditions(state, demand);
       // Trials and migration are deliberately opt-in and strategy-specific.
       updatePanel(state);
     } finally {
