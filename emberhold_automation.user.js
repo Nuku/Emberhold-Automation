@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.4.0
+// @version      1.5.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -116,6 +116,15 @@
     const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]));
     if (!assignable.length) return;
 
+    const count = id => Number(state.jobs?.[id] || 0);
+    const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
+    const minimums = [
+      ['forager', 1],
+      ['woodcutter', 1],
+      ['miner', state.pop >= 6 ? 1 : 0],
+      ['thinker', state.pop >= 8 ? 1 : 0],
+    ];
+
     if (assignable.includes('diplomat') && api()?.actions?.assignDiplomat) {
       for (const [id, count] of Object.entries(state.diplomats || {})) {
         if (count > 0 && state.diplomacy?.[id]?.disposition >= 100) {
@@ -145,23 +154,27 @@
     const available = Math.max(0, state.pop - Object.values(state.jobs || {})
       .reduce((sum, n) => sum + (Number(n) || 0), 0));
     if (available > 0) {
-      // Keep the first two needs covered, then concentrate workers on the
-      // highest unlocked job. The engine rejects unavailable assignments.
-      const food = Math.max(0, (state.res.food || 0) - (demand.food || 0));
-      const wood = Math.max(0, (state.res.wood || 0) - (demand.wood || 0));
-      const priority = food < 40 ? ['forager', 'woodcutter'] :
-        wood < 30 ? ['woodcutter', 'forager'] :
-          ['thinker', 'miner', 'woodcutter', 'forager'];
+      const underMinimum = minimums.find(([id, minimum]) =>
+        minimum > 0 && assignable.includes(id) && count(id) < minimum);
+      const priority = underMinimum ? [underMinimum[0]] :
+        stock('food') < 60 ? ['forager'] :
+        stock('wood') < (demand.wood || 0) + 40 ? ['woodcutter'] :
+        stock('stone') < (demand.stone || 0) + 20 ? ['miner'] :
+        stock('knowledge') < (demand.knowledge || 0) + 100 ? ['thinker'] :
+          ['forager', 'woodcutter', 'miner'];
       const target = priority.find(id => assignable.includes(id)) || assignable[0];
       invoke('assign', target, 1);
       return;
     }
 
-    // Move one worker when a store is in danger. This keeps the loop gentle
-    // and avoids oscillating every worker on every pass.
-    if (Math.max(0, (state.res.food || 0) - (demand.food || 0)) < 15) {
-      const donor = Object.keys(state.jobs || {}).find(id => id !== 'forager' && state.jobs[id] > 0);
-      if (donor) { invoke('assign', donor, -1); invoke('assign', 'forager', 1); }
+    // Reallocate one worker when a store is in danger. Do this before the
+    // store reaches zero, and never take the last worker from a minimum job.
+    const foodDanger = stock('food') < 60;
+    const donor = Object.keys(state.jobs || {}).find(id =>
+      id !== 'forager' && count(id) > (minimums.find(m => m[0] === id)?.[1] || 0));
+    if (foodDanger && donor) {
+      invoke('assign', donor, -1);
+      invoke('assign', 'forager', 1);
     }
   }
 
