@@ -33,6 +33,7 @@
   let timer = null;
   let busy = false;
   let lastAction = 'Waiting for Emberhold';
+  const pausedDiplomats = Object.create(null);
 
   function loadSettings() {
     try {
@@ -109,6 +110,32 @@
     const defs = definitions().JOBS || {};
     const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]));
     if (!assignable.length) return;
+
+    if (assignable.includes('diplomat') && api()?.actions?.assignDiplomat) {
+      for (const [id, count] of Object.entries(state.diplomats || {})) {
+        if (count > 0 && state.diplomacy?.[id]?.disposition >= 100) {
+          pausedDiplomats[id] = (pausedDiplomats[id] || 0) + 1;
+          invoke('assignDiplomat', id, -1);
+          return;
+        }
+      }
+
+      const assigned = Object.values(state.jobs || {})
+        .reduce((sum, n) => sum + (Number(n) || 0), 0) +
+        Object.values(state.diplomats || {})
+          .reduce((sum, n) => sum + (Number(n) || 0), 0);
+      const available = Math.max(0, state.pop - assigned);
+      if (available > 0) {
+        for (const [id, count] of Object.entries(pausedDiplomats)) {
+          if (count > 0 && state.diplomacy?.[id]?.disposition < 100) {
+            if (invoke('assignDiplomat', id, 1)) {
+              pausedDiplomats[id] = count - 1;
+              return;
+            }
+          }
+        }
+      }
+    }
 
     const available = Math.max(0, state.pop - Object.values(state.jobs || {})
       .reduce((sum, n) => sum + (Number(n) || 0), 0));
