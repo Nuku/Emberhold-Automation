@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.23.0
+// @version      1.24.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -60,8 +60,10 @@
   }
 
   function invoke(name, ...args) {
-    if (!settings.enabled || !api()?.actions?.[name]) return false;
-    api().actions[name](...args);
+    if (!settings.enabled) return false;
+    const action = api()?.actions?.[name] || (api()?.action ? (...values) => api().action(name, ...values) : null);
+    if (!action) return false;
+    action(...args);
     lastAction = `${name}${args.length ? ` (${args.join(', ')})` : ''}`;
     return true;
   }
@@ -398,7 +400,8 @@
 
   function updatePanel(state) {
     const status = document.querySelector('#emberhold-automation [data-status]');
-    if (status) status.textContent = `${lastAction} · day ${Math.floor(state.day)}`;
+    const current = state?.state || state;
+    if (status) status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}`;
   }
 
   function restart() {
