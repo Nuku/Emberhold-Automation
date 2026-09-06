@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.1
+// @version      1.25.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -227,8 +227,8 @@
     const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0 &&
       (!effectiveJobRate || effectiveJobRate(id) > 0) && needsWork(id));
     const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
-    const underMinimum = minimums.find(([id, minimum]) =>
-      minimum > 0 && assignable.includes(id) && count(id) < minimum(id));
+    const underMinimum = minimums.find(([id, minimumCount]) =>
+      minimumCount > 0 && assignable.includes(id) && count(id) < minimum(id));
     const target = underMinimum?.[0] || targetForNeed || balancedJob;
     const reclaimable = Object.keys(state.jobs || {}).filter(id => {
       const zeroed = effectiveJobRate && defs[id]?.res && Number(defs[id].base) > 0 && effectiveJobRate(id) <= 0;
