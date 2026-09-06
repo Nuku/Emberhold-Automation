@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.0
+// @version      1.25.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -66,7 +66,13 @@
       lastAction = `No action API (${name})`;
       return false;
     }
-    action(...args);
+    try {
+      action(...args);
+    } catch (error) {
+      lastAction = `Error in ${name}: ${error?.message || error}`;
+      console.error('[Emberhold Automation]', lastAction, error);
+      return false;
+    }
     lastAction = `${name}${args.length ? ` (${args.join(', ')})` : ''}`;
     return true;
   }
@@ -356,6 +362,7 @@
     try {
       const state = snapshot();
       if (!state) return;
+      lastAction = 'Scanning Emberhold';
       const demand = queuedDemand();
       if (settings.jobs && autoMorale(state)) return;
       if (settings.jobs) autoJobs(state, demand);
@@ -365,7 +372,12 @@
       if (settings.diplomacy) autoDiplomacy(state, demand);
       if (settings.expeditions) autoExpeditions(state, demand);
       // Trials and migration are deliberately opt-in and strategy-specific.
+      if (lastAction === 'Scanning Emberhold') lastAction = 'No eligible action';
       updatePanel(state);
+    } catch (error) {
+      lastAction = `Automation error: ${error?.message || error}`;
+      console.error('[Emberhold Automation]', lastAction, error);
+      updatePanel(snapshot());
     } finally {
       busy = false;
     }
