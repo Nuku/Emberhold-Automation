@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.3
+// @version      1.25.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -230,7 +230,7 @@
     const target = underMinimum?.[0] || targetForNeed || balancedJob;
     const reclaimable = Object.keys(state.jobs || {}).filter(id => {
       const zeroed = effectiveJobRate && defs[id]?.res && Number(defs[id].base) > 0 && effectiveJobRate(id) <= 0;
-      return id !== target && count(id) > minimum(id) && (zeroed || !needsWork(id));
+      return id !== 'guard' && id !== target && count(id) > minimum(id) && (zeroed || !needsWork(id));
     });
     if (reclaimable.length) {
       for (const donor of reclaimable) {
@@ -253,7 +253,7 @@
     // when all stores have enough coverage. Never take a minimum job below its
     // floor, and prefer removing the largest surplus first.
     const donors = Object.keys(state.jobs || {})
-      .filter(id => id !== target && count(id) > minimum(id))
+      .filter(id => id !== 'guard' && id !== target && count(id) > minimum(id))
       .sort((a, b) => {
         const aZeroed = effectiveJobRate && defs[a]?.res && Number(defs[a].base) > 0 && effectiveJobRate(a) <= 0;
         const bZeroed = effectiveJobRate && defs[b]?.res && Number(defs[b].base) > 0 && effectiveJobRate(b) <= 0;
