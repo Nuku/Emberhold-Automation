@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.16.0
+// @version      1.17.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -126,8 +126,6 @@
       ['miner', state.pop >= 6 ? 1 : 0],
       ['thinker', state.pop >= 8 ? 1 : 0],
     ];
-    const minimum = id => effectiveJobRate && effectiveJobRate(id) <= 0
-      ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
     const rates = api().helpers?.production?.(1) || {};
     const capacityOf = api().helpers?.capacityOf;
     const needsWork = id => {
@@ -137,6 +135,8 @@
         (state.res[resource] || 0) >= capacityOf(resource) - 0.001;
       return !full || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
     };
+    const minimum = id => !needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
+      ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
     const needs = [
       ['forager', 'food', 60],
       ['woodcutter', 'wood', (demand.wood || 0) + 40],
@@ -191,8 +191,22 @@
     const underMinimum = minimums.find(([id, minimum]) =>
       minimum > 0 && assignable.includes(id) && needsWork(id) && count(id) < minimum);
     const target = underMinimum?.[0] || targetForNeed || balancedJob;
+    const reclaimable = Object.keys(state.jobs || {}).filter(id => {
+      const zeroed = effectiveJobRate && defs[id]?.res && Number(defs[id].base) > 0 && effectiveJobRate(id) <= 0;
+      return id !== target && count(id) > minimum(id) && (zeroed || !needsWork(id));
+    });
+    if (reclaimable.length) {
+      for (const donor of reclaimable) {
+        const amount = Math.max(0, count(donor) - minimum(donor));
+        for (let i = 0; i < amount; i++) invoke('assign', donor, -1);
+      }
+      return;
+    }
     if (available > 0) {
-      if (target) invoke('assign', target, 1);
+      if (target) {
+        const assignments = need ? available : 1;
+        for (let i = 0; i < assignments; i++) invoke('assign', target, 1);
+      }
       return;
     }
 
