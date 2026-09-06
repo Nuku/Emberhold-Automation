@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.9.0
+// @version      1.10.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -183,7 +183,12 @@
     // floor, and prefer removing the largest surplus first.
     const donors = Object.keys(state.jobs || {})
       .filter(id => id !== target && count(id) > minimum(id))
-      .sort((a, b) => (count(b) - minimum(b)) - (count(a) - minimum(a)));
+      .sort((a, b) => {
+        const aZeroed = effectiveJobRate && defs[a]?.res && Number(defs[a].base) > 0 && effectiveJobRate(a) <= 0;
+        const bZeroed = effectiveJobRate && defs[b]?.res && Number(defs[b].base) > 0 && effectiveJobRate(b) <= 0;
+        return Number(bZeroed) - Number(aZeroed) ||
+          (count(b) - minimum(b)) - (count(a) - minimum(a));
+      });
     const donor = donors[0];
     if (donor && target) {
       invoke('assign', donor, -1);
