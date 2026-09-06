@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.22.0
+// @version      1.23.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -118,8 +118,14 @@
     const assigned = Object.values(state.jobs || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
     const diplomats = Object.values(state.diplomats || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
     const available = Math.max(0, state.pop - assigned - diplomats);
-    if ((state.morale || 0) < 100 && available > 0) return invoke('assignPerformer', 1);
-    if ((state.morale || 0) >= 100 && performers > 1) return invoke('assignPerformer', -1);
+    if ((state.morale || 0) < 100 && available > 0) {
+      invoke('assignPerformer', 1);
+      return Number(api().getState()?.jobs?.performer || 0) > performers;
+    }
+    if ((state.morale || 0) >= 100 && performers > 1) {
+      invoke('assignPerformer', -1);
+      return Number(api().getState()?.jobs?.performer || 0) < performers;
+    }
     return false;
   }
 
@@ -201,8 +207,12 @@
       }
     }
 
-    const available = Math.max(0, state.pop - Object.values(state.jobs || {})
-      .reduce((sum, n) => sum + (Number(n) || 0), 0));
+    const assigned = Object.entries(state.jobs || {})
+      .filter(([id]) => id !== 'guard')
+      .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
+    const diplomats = Object.values(state.diplomats || {})
+      .reduce((sum, n) => sum + (Number(n) || 0), 0);
+    const available = Math.max(0, state.pop - assigned - diplomats);
     const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0 &&
       (!effectiveJobRate || effectiveJobRate(id) > 0) && needsWork(id));
     const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
