@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.13.0
+// @version      1.14.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -141,7 +141,11 @@
       .filter(id => defs[id].res && Number(defs[id].base) > 0 &&
         !needs.some(([job]) => job === id))
       .map(id => [id, defs[id].res, reserve(defs[id].res)]);
-    const need = [...needs, ...specialistNeeds].find(([job, resource, target]) => assignable.includes(job) &&
+    const demandNeeds = assignable
+      .filter(id => defs[id].res && Number(defs[id].base) > 0 && (demand[defs[id].res] || 0) > 0)
+      .map(id => [id, defs[id].res,
+        Math.max(reserve(defs[id].res), Math.ceil((demand[defs[id].res] || 0) * 0.10))]);
+    const need = [...demandNeeds, ...needs, ...specialistNeeds].find(([job, resource, target]) => assignable.includes(job) &&
       (stock(resource) < target || (rates[resource] || 0) < 0));
     const targetForNeed = need && need[0];
 
