@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.7.0
+// @version      1.8.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -113,7 +113,9 @@
 
   function autoJobs(state, demand) {
     const defs = definitions().JOBS || {};
-    const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]));
+    const effectiveJobRate = api().helpers?.jobProduction;
+    const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]) &&
+      (!effectiveJobRate || effectiveJobRate(id) > 0));
     if (!assignable.length) return;
 
     const count = id => Number(state.jobs?.[id] || 0);
@@ -164,7 +166,8 @@
 
     const available = Math.max(0, state.pop - Object.values(state.jobs || {})
       .reduce((sum, n) => sum + (Number(n) || 0), 0));
-    const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0);
+    const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0 &&
+      (!effectiveJobRate || effectiveJobRate(id) > 0));
     const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
     const underMinimum = minimums.find(([id, minimum]) =>
       minimum > 0 && assignable.includes(id) && count(id) < minimum);
