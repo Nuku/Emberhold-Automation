@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.10.0
+// @version      1.11.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -103,7 +103,7 @@
   const BUILD_ORDER = [
     'hut', 'storehouse', 'foragerLodge', 'lumberYard', 'quarry', 'stoneWorks',
     'workbench', 'library', 'monument', 'barracks', 'deepMine', 'deepStore',
-    'coalSeam', 'foundry', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
+    'coalSeam', 'forge', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
     'steamPlant', 'dynamo', 'vault', 'factory', 'observatory', 'beacon',
   ];
   const JOB_ORDER = [
@@ -135,7 +135,13 @@
       ['miner', 'stone', (demand.stone || 0) + 20],
       ['thinker', 'knowledge', (demand.knowledge || 0) + 100],
     ];
-    const need = needs.find(([job, resource, target]) => assignable.includes(job) &&
+    const reserve = resource => resource === 'food' ? 60 : resource === 'wood' ? 40 :
+      resource === 'stone' ? 20 : resource === 'knowledge' ? 100 : 10;
+    const specialistNeeds = assignable
+      .filter(id => defs[id].res && Number(defs[id].base) > 0 &&
+        !needs.some(([job]) => job === id))
+      .map(id => [id, defs[id].res, reserve(defs[id].res)]);
+    const need = [...needs, ...specialistNeeds].find(([job, resource, target]) => assignable.includes(job) &&
       (stock(resource) < target || (resource === 'food' && (rates.food || 0) < 0)));
     const targetForNeed = need && need[0];
 
