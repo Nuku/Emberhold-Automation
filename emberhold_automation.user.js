@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.15.0
+// @version      1.16.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -129,6 +129,14 @@
     const minimum = id => effectiveJobRate && effectiveJobRate(id) <= 0
       ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
     const rates = api().helpers?.production?.(1) || {};
+    const capacityOf = api().helpers?.capacityOf;
+    const needsWork = id => {
+      const resource = defs[id]?.res;
+      if (!resource) return true;
+      const full = typeof capacityOf === 'function' && Number.isFinite(capacityOf(resource)) &&
+        (state.res[resource] || 0) >= capacityOf(resource) - 0.001;
+      return !full || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
+    };
     const needs = [
       ['forager', 'food', 60],
       ['woodcutter', 'wood', (demand.wood || 0) + 40],
@@ -178,10 +186,10 @@
     const available = Math.max(0, state.pop - Object.values(state.jobs || {})
       .reduce((sum, n) => sum + (Number(n) || 0), 0));
     const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0 &&
-      (!effectiveJobRate || effectiveJobRate(id) > 0));
+      (!effectiveJobRate || effectiveJobRate(id) > 0) && needsWork(id));
     const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
     const underMinimum = minimums.find(([id, minimum]) =>
-      minimum > 0 && assignable.includes(id) && count(id) < minimum);
+      minimum > 0 && assignable.includes(id) && needsWork(id) && count(id) < minimum);
     const target = underMinimum?.[0] || targetForNeed || balancedJob;
     if (available > 0) {
       if (target) invoke('assign', target, 1);
