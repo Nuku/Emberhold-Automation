@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.21.0
+// @version      1.22.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -149,8 +149,9 @@
         (state.res[resource] || 0) >= capacityOf(resource) - 0.001;
       return !full || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
     };
-    const minimum = id => !needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
-      ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
+    const minimum = id => id === 'forager' ? 1 :
+      (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
+        ? 0 : minimums.find(item => item[0] === id)?.[1] || 0);
     const reserve = resource => {
       if (resource === 'knowledge' || resource === 'currency') return 100;
       const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
@@ -206,7 +207,7 @@
       (!effectiveJobRate || effectiveJobRate(id) > 0) && needsWork(id));
     const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
     const underMinimum = minimums.find(([id, minimum]) =>
-      minimum > 0 && assignable.includes(id) && needsWork(id) && count(id) < minimum);
+      minimum > 0 && assignable.includes(id) && count(id) < minimum(id));
     const target = underMinimum?.[0] || targetForNeed || balancedJob;
     const reclaimable = Object.keys(state.jobs || {}).filter(id => {
       const zeroed = effectiveJobRate && defs[id]?.res && Number(defs[id].base) > 0 && effectiveJobRate(id) <= 0;
