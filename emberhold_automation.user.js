@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.2
+// @version      1.25.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -158,22 +158,20 @@
     const rates = api().helpers?.production?.(1) || {};
     const currencyTarget = Math.max(100, Math.ceil((demand.currency || 0) * 0.10));
     const capacityOf = api().helpers?.capacityOf;
-    const needsWork = id => {
-      const resource = defs[id]?.res;
-      if (!resource) return true;
-      if (resource === 'currency') return stock('currency') < currencyTarget || (rates.currency || 0) < 0;
-      const full = typeof capacityOf === 'function' && Number.isFinite(capacityOf(resource)) &&
-        (state.res[resource] || 0) >= capacityOf(resource) - 0.001;
-      return !full || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
-    };
-    const minimum = id => id === 'forager' ? 1 :
-      (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
-        ? 0 : minimums.find(item => item[0] === id)?.[1] || 0);
     const reserve = resource => {
       if (resource === 'knowledge' || resource === 'currency') return 100;
       const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
       return Number.isFinite(cap) ? Math.max(10, Math.ceil(cap * 0.5)) : 10;
     };
+    const needsWork = id => {
+      const resource = defs[id]?.res;
+      if (!resource) return true;
+      if (resource === 'currency') return stock('currency') < currencyTarget || (rates.currency || 0) < 0;
+      return stock(resource) < reserve(resource) || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
+    };
+    const minimum = id => id === 'forager' ? 1 :
+      (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
+        ? 0 : minimums.find(item => item[0] === id)?.[1] || 0);
     const needs = [
       ['forager', 'food', reserve('food')],
       ['woodcutter', 'wood', reserve('wood')],
