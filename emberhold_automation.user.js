@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.14.0
+// @version      1.15.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -196,8 +196,14 @@
       .sort((a, b) => {
         const aZeroed = effectiveJobRate && defs[a]?.res && Number(defs[a].base) > 0 && effectiveJobRate(a) <= 0;
         const bZeroed = effectiveJobRate && defs[b]?.res && Number(defs[b].base) > 0 && effectiveJobRate(b) <= 0;
-        return Number(bZeroed) - Number(aZeroed) ||
-          (count(b) - minimum(b)) - (count(a) - minimum(a));
+        const surplus = id => {
+          const resource = defs[id]?.res;
+          return resource ? Math.max(0, (state.res[resource] || 0) - (demand[resource] || 0)) - reserve(resource) : 0;
+        };
+        const aDemanded = defs[a]?.res && (demand[defs[a].res] || 0) > 0;
+        const bDemanded = defs[b]?.res && (demand[defs[b].res] || 0) > 0;
+        return Number(bZeroed) - Number(aZeroed) || Number(aDemanded) - Number(bDemanded) ||
+          surplus(b) - surplus(a) || (count(b) - minimum(b)) - (count(a) - minimum(a));
       });
     const donor = donors[0];
     if (donor && target) {
