@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.12.0
+// @version      1.13.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -142,7 +142,7 @@
         !needs.some(([job]) => job === id))
       .map(id => [id, defs[id].res, reserve(defs[id].res)]);
     const need = [...needs, ...specialistNeeds].find(([job, resource, target]) => assignable.includes(job) &&
-      (stock(resource) < target || (resource === 'food' && (rates.food || 0) < 0)));
+      (stock(resource) < target || (rates[resource] || 0) < 0));
     const targetForNeed = need && need[0];
 
     if (assignable.includes('diplomat') && api()?.actions?.assignDiplomat) {
