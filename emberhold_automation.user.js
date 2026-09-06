@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.11.0
+// @version      1.12.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -102,7 +102,7 @@
   ];
   const BUILD_ORDER = [
     'hut', 'storehouse', 'foragerLodge', 'lumberYard', 'quarry', 'stoneWorks',
-    'workbench', 'library', 'monument', 'barracks', 'deepMine', 'deepStore',
+    'workbench', 'library', 'monument', 'barracks', 'trainingYard', 'hospital', 'deepMine', 'deepStore',
     'coalSeam', 'forge', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
     'steamPlant', 'dynamo', 'vault', 'factory', 'observatory', 'beacon',
   ];
@@ -219,6 +219,9 @@
     for (const id of BUILD_ORDER) {
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
+      const canBuild = api().helpers?.canBuild;
+      if (canBuild ? !canBuild(id) :
+        (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = typeof api().helpers?.buildingCost === 'function'
         ? api().helpers.buildingCost(def) : def.cost;
       if (craftMissingFor(cost, state, demand)) return;
