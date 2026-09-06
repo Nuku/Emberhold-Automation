@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.24.0
+// @version      1.25.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -62,7 +62,10 @@
   function invoke(name, ...args) {
     if (!settings.enabled) return false;
     const action = api()?.actions?.[name] || (api()?.action ? (...values) => api().action(name, ...values) : null);
-    if (!action) return false;
+    if (!action) {
+      lastAction = `No action API (${name})`;
+      return false;
+    }
     action(...args);
     lastAction = `${name}${args.length ? ` (${args.join(', ')})` : ''}`;
     return true;
@@ -411,6 +414,7 @@
 
   function boot() {
     if (!api()) return setTimeout(boot, 250);
+    lastAction = api().actions ? 'Connected to Emberhold' : api().action ? 'Connected (legacy API)' : 'State API only — actions unavailable';
     makePanel();
     api().subscribe(updatePanel);
     restart();
