@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.18.0
+// @version      1.19.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -110,6 +110,18 @@
     'forager', 'woodcutter', 'miner', 'thinker', 'tinkerer', 'digger',
     'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
   ];
+
+  function autoMorale(state) {
+    const performer = definitions().JOBS?.performer;
+    if (!performer || !jobUnlocked(performer)) return false;
+    const performers = Number(state.jobs?.performer || 0);
+    const assigned = Object.values(state.jobs || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    const diplomats = Object.values(state.diplomats || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    const available = Math.max(0, state.pop - assigned - diplomats);
+    if ((state.morale || 0) < 100 && available > 0) return invoke('assignPerformer', 1);
+    if ((state.morale || 0) >= 100 && performers > 1) return invoke('assignPerformer', -1);
+    return false;
+  }
 
   function autoJobs(state, demand) {
     const defs = definitions().JOBS || {};
@@ -324,6 +336,7 @@
       const state = snapshot();
       if (!state) return;
       const demand = queuedDemand();
+      if (settings.jobs && autoMorale(state)) return;
       if (settings.jobs) autoJobs(state, demand);
       if (settings.research) autoResearch(state, demand);
       if (settings.buildings) autoBuildings(state, demand);
