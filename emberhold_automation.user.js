@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.8.0
+// @version      1.9.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -126,7 +126,8 @@
       ['miner', state.pop >= 6 ? 1 : 0],
       ['thinker', state.pop >= 8 ? 1 : 0],
     ];
-    const minimum = id => minimums.find(item => item[0] === id)?.[1] || 0;
+    const minimum = id => effectiveJobRate && effectiveJobRate(id) <= 0
+      ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
     const rates = api().helpers?.production?.(1) || {};
     const needs = [
       ['forager', 'food', 60],
