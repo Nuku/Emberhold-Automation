@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.20.0
+// @version      1.21.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -151,14 +151,17 @@
     };
     const minimum = id => !needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
       ? 0 : minimums.find(item => item[0] === id)?.[1] || 0;
+    const reserve = resource => {
+      if (resource === 'knowledge' || resource === 'currency') return 100;
+      const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
+      return Number.isFinite(cap) ? Math.max(10, Math.ceil(cap * 0.5)) : 10;
+    };
     const needs = [
-      ['forager', 'food', 60],
-      ['woodcutter', 'wood', (demand.wood || 0) + 40],
-      ['miner', 'stone', (demand.stone || 0) + 20],
-      ['thinker', 'knowledge', (demand.knowledge || 0) + 100],
+      ['forager', 'food', reserve('food')],
+      ['woodcutter', 'wood', reserve('wood')],
+      ['miner', 'stone', reserve('stone')],
+      ['thinker', 'knowledge', reserve('knowledge')],
     ];
-    const reserve = resource => resource === 'food' ? 60 : resource === 'wood' ? 40 :
-      resource === 'stone' ? 20 : resource === 'knowledge' ? 100 : resource === 'currency' ? 100 : 10;
     const specialistNeeds = assignable
       .filter(id => defs[id].res && Number(defs[id].base) > 0 &&
         !needs.some(([job]) => job === id))
