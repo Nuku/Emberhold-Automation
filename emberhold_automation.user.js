@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.17.0
+// @version      1.18.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -198,14 +198,16 @@
     if (reclaimable.length) {
       for (const donor of reclaimable) {
         const amount = Math.max(0, count(donor) - minimum(donor));
-        for (let i = 0; i < amount; i++) invoke('assign', donor, -1);
+        if (api().actions?.setJob) invoke('setJob', donor, minimum(donor));
+        else for (let i = 0; i < amount; i++) invoke('assign', donor, -1);
       }
       return;
     }
     if (available > 0) {
       if (target) {
         const assignments = need ? available : 1;
-        for (let i = 0; i < assignments; i++) invoke('assign', target, 1);
+        if (api().actions?.setJob) invoke('setJob', target, count(target) + assignments);
+        else for (let i = 0; i < assignments; i++) invoke('assign', target, 1);
       }
       return;
     }
