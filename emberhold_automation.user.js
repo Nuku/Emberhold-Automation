@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.8
+// @version      1.25.9
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -138,6 +138,27 @@
     let changed = false;
     for (let i = 0; i < remaining; i++) {
       if (!invoke('assign', id, 1)) break;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function releaseWorkers(id, amount) {
+    const current = jobCount(id);
+    const requested = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!requested) return false;
+    const expected = Math.max(0, current - requested);
+
+    // Some builds expose setJob but partially apply a bulk decrease. Verify
+    // the resulting count and finish the release through the delta API.
+    if (api().actions?.setJob && invoke('setJob', id, expected) && jobCount(id) <= expected) {
+      return true;
+    }
+
+    let changed = false;
+    const remaining = Math.max(0, jobCount(id) - expected);
+    for (let i = 0; i < remaining; i++) {
+      if (!invoke('assign', id, -1)) break;
       changed = true;
     }
     return changed;
@@ -302,7 +323,7 @@
     let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);
     for (const donor of donors) {
       if (needed <= 0) break;
-      const release = Math.min(needed, count(donor) - minimum(donor));
+      const release = Math.min(needed, count(donor) - donorMinimum(donor));
       if (release) releases.set(donor, release);
       needed -= release;
     }
@@ -317,8 +338,7 @@
 
     for (const [id, amount] of releases) {
       const targetCount = Math.max(donorMinimum(id), count(id) - amount);
-      if (api().actions?.setJob && invoke('setJob', id, targetCount)) continue;
-      for (let i = 0; i < amount; i++) invoke('assign', id, -1);
+      releaseWorkers(id, Math.max(0, count(id) - targetCount));
     }
     for (const [id, amount] of additions) assignWorkers(id, amount, state);
     if (!planned.size) {

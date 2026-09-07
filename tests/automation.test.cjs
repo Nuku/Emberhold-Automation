@@ -124,6 +124,28 @@ test('job assignment falls back when the bulk setter does not change the job', (
   assert.equal(h.state.jobs.forager, 3);
 });
 
+test('worker releases finish when bulk decrease is only partially applied', () => {
+  const h = harness();
+  h.state.pop = 4;
+  h.state.jobs = { forager: 1, miner: 3 };
+  h.state.res = { food: 0, stone: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    miner: { res: 'stone', base: 1 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: -10, stone: 1 });
+  h.action('setJob', (id, total) => {
+    h.state.jobs[id] = id === 'miner' ? Math.max(total, h.state.jobs[id] - 1) : total;
+  });
+  h.action('assign', (id, delta) => { h.state.jobs[id] += delta; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.miner, 0);
+  assert.equal(h.state.jobs.forager, 4);
+});
+
 test('food workers settle at sustainable production across repeated ticks', () => {
   const h = harness();
   h.state.pop = 31;
