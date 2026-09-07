@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.27.1
+// @version      1.27.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -195,19 +195,60 @@
   ];
 
   function autoMorale(state) {
-    const performer = definitions().JOBS?.performer;
+    const defs = definitions().JOBS || {};
+    const performer = defs.performer;
     if (!performer || !jobUnlocked(performer)) return false;
     const performers = Number(state.jobs?.performer || 0);
-    const available = availableWorkers(state);
-    if ((state.morale || 0) < 100 && available > 0) {
-      invoke('assignPerformer', 1);
-      return Number(api().getState()?.jobs?.performer || 0) > performers;
+    const rates = api().helpers?.production?.(1) || {};
+    // Let the food planner use idle villagers and surplus producers first.
+    if (rates.food < 0 || (state.res.food || 0) <= 0.0001) return false;
+
+    const partners = Array.isArray(state.tradePartners)
+      ? (state.tradePartner && state.tradePartners[0] !== state.tradePartner
+        ? [state.tradePartner] : state.tradePartners)
+      : [state.tradePartner];
+    const commonality = state.techs?.commonality && state.policy === 'commonality';
+    const conquered = commonality ? 0 : [...new Set(partners)]
+      .filter(id => id && state.diplomacy?.[id]?.conquered).length;
+    // The API does not expose morale drift. Budget for storms (-.060), winter
+    // (-.006), and secure food at high morale (-.008), plus .025/s recovery.
+    // Do not rely on Shrine/Hospital bonuses that disappear as morale rises.
+    // Keeping this target at the ceiling avoids repeated hiring and firing.
+    const pressure = Math.max(0, state.pop - 20) * 0.01 +
+      Number(state.bld?.livingBlock || 0) * 0.1 + conquered;
+    const target = Math.ceil((pressure + 0.060 + 0.006 + 0.008 + 0.025) / 0.10);
+    if (performers > target) {
+      for (let i = performers; i > target; i--) {
+        if (!invoke('assignPerformer', -1)) break;
+      }
+      return jobCount('performer') < performers;
     }
-    if ((state.morale || 0) >= 100 && performers > 1) {
-      invoke('assignPerformer', -1);
-      return Number(api().getState()?.jobs?.performer || 0) < performers;
+    if (performers >= target) return false;
+
+    let missing = Math.max(0, target - performers - availableWorkers(state));
+    const donors = Object.keys(state.jobs || {}).filter(id => id !== 'guard' &&
+      id !== 'performer' && !defs[id]?.targeted && defs[id]?.res &&
+      !['food', 'knowledge'].includes(defs[id].res))
+      .sort((a, b) => Number(state.jobs[b]) - Number(state.jobs[a]));
+    for (const id of donors) {
+      if (missing <= 0) break;
+      const count = jobCount(id);
+      const rate = api().helpers?.jobProduction?.(id);
+      const net = rates[defs[id].res];
+      // Preserve one worker and enough output to cover ongoing consumption.
+      const surplus = rate > 0 && Number.isFinite(net)
+        ? Math.max(0, Math.min(count - 1, Math.floor((net + 1e-9) / rate))) : 0;
+      if (!surplus) continue;
+      releaseWorkers(id, Math.min(surplus, missing));
+      const released = count - jobCount(id);
+      missing -= released;
+      rates[defs[id].res] -= released * rate;
     }
-    return false;
+    const additions = Math.min(target - performers, availableWorkers(snapshot()));
+    for (let i = 0; i < additions; i++) {
+      if (!invoke('assignPerformer', 1)) break;
+    }
+    return jobCount('performer') > performers;
   }
 
   function autoJobs(state, demand) {

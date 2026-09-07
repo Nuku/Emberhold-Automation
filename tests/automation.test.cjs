@@ -450,12 +450,106 @@ test('morale assignments do not skip research for the tick', () => {
   const h = harness();
   h.state.morale = 50;
   h.state.res.knowledge = 10;
+  h.state.res.food = 100;
   h.api.definitions.JOBS = { performer: { targeted: true } };
   h.api.definitions.TECHS = [{ id: 'writing', cost: 10 }];
   h.action('assignPerformer', () => { h.state.jobs.performer = 1; });
   h.action('research', () => { h.state.techs.writing = true; });
   h.automationStep();
   assert.equal(h.state.techs.writing, true);
+  assert.equal(h.state.jobs.performer, 1);
+});
+
+function moraleHarness() {
+  const h = harness();
+  h.state.pop = 53;
+  h.state.morale = 0;
+  h.state.res = { food: 3440, wood: 27, stone: 1609, knowledge: 79 };
+  h.state.jobs = { forager: 5, woodcutter: 38, thinker: 4, miner: 4,
+    performer: 1, explorer: 1 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 0.55 }, woodcutter: { res: 'wood', base: 0.45 },
+    miner: { res: 'stone', base: 0.28 }, thinker: { res: 'knowledge', base: 0.12 },
+    performer: { targeted: true }, explorer: { targeted: true },
+  };
+  h.api.helpers.jobProduction = id => h.api.definitions.JOBS[id]?.base || 0;
+  h.api.helpers.production = () => ({ food: 4.21, wood: h.state.jobs.woodcutter * 0.45,
+    stone: 0, knowledge: 1.52 });
+  h.action('setJob', (id, count) => { h.state.jobs[id] = count; });
+  h.action('assignPerformer', delta => {
+    if (delta > 0 && h.availableWorkers(h.state) < 1) return false;
+    h.state.jobs.performer += delta;
+  });
+  return h;
+}
+
+test('morale recruits a full recovery team without waiting for population growth', () => {
+  const h = moraleHarness();
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 5);
+  assert.equal(h.state.jobs.woodcutter, 34);
+  assert.equal(h.state.jobs.forager, 5);
+  assert.equal(h.state.jobs.thinker, 4);
+  assert.equal(h.state.jobs.explorer, 1);
+  assert.equal(h.availableWorkers(h.state), 0);
+  const settledCalls = h.calls.length;
+  for (const morale of [0, 70, 80, 100, 115, 135]) {
+    h.state.morale = morale;
+    h.autoMorale(h.api.getState());
+  }
+  assert.equal(h.calls.length, settledCalls);
+});
+
+test('morale uses idle villagers before donors and releases excess performers', () => {
+  const h = moraleHarness();
+  h.state.jobs.woodcutter -= 4;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 5);
+  assert.ok(h.calls.every(([name]) => name === 'assignPerformer'));
+  h.state.jobs.performer += 3;
+  h.state.jobs.woodcutter -= 3;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 5);
+  assert.equal(h.availableWorkers(h.state), 3);
+});
+
+test('morale preserves upkeep and gives food shortages priority', () => {
+  const h = moraleHarness();
+  h.api.helpers.production = () => ({ food: 1, wood: 0.45, stone: -1 });
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 2);
+  assert.equal(h.state.jobs.woodcutter, 37);
+  assert.equal(h.state.jobs.miner, 4);
+  h.calls.length = 0;
+  h.api.helpers.production = () => ({ food: -0.1, wood: 10 });
+  h.autoMorale(h.api.getState());
+  assert.deepEqual(h.calls, []);
+  h.state.res.food = 0;
+  h.api.helpers.production = () => ({ food: 1, wood: 10 });
+  h.autoMorale(h.api.getState());
+  assert.deepEqual(h.calls, []);
+});
+
+test('morale accounts for housing pressure and conquest, including Commonality', () => {
+  const h = moraleHarness();
+  h.state.bld.livingBlock = 2;
+  h.state.tradePartners = ['human', 'rabbitfolk'];
+  h.state.diplomacy.human = { conquered: true };
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 17);
+  h.state.techs.commonality = true;
+  h.state.policy = 'commonality';
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 7);
+});
+
+test('failed donor release does not overassign performers', () => {
+  const h = moraleHarness();
+  h.action('setJob', () => false);
+  h.action('assign', () => false);
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 1);
+  assert.ok(!h.calls.some(([name]) => name === 'assignPerformer'));
 });
 
 test('new research and buildings are discovered and obey unlocks and queues', () => {
