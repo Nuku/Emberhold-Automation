@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.4
+// @version      1.26.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -339,6 +339,12 @@
         shortage ? Math.ceil(shortage / rate) : 0);
     };
     const planned = new Map();
+    // Thinkers get first claim on non-emergency population. Other production
+    // jobs may still retain their minimum, but surplus workers are available
+    // for the thinker cap even when those jobs have a stockpile deficit.
+    if (!foodEmergency && assignable.includes('thinker')) {
+      planned.set('thinker', Math.max(0, thinkerLimit - count('thinker')));
+    }
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
       if (foodEmergency && id === 'thinker') continue;
@@ -350,13 +356,10 @@
         planned.set(id, Math.max(planned.get(id) || 0, minimum(id) - count(id)));
       }
     }
-    if (!foodEmergency && assignable.includes('thinker')) {
-      planned.set('thinker', Math.max(planned.get('thinker') || 0,
-        thinkerLimit - count('thinker')));
-    }
 
     const donors = Object.keys(state.jobs || {})
-      .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' && !planned.has(id) && count(id) > donorMinimum(id))
+      .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' &&
+        (id !== 'thinker' || foodEmergency) && count(id) > donorMinimum(id))
       .sort((a, b) => count(b) - donorMinimum(b) - (count(a) - donorMinimum(a)));
     const releases = new Map();
     let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);

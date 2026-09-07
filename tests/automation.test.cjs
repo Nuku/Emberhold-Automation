@@ -211,6 +211,27 @@ test('surplus workers are assigned to thinkers up to their cap', () => {
   assert.equal(h.state.jobs.thinker, 3);
 });
 
+test('thinkers take priority over non-food stockpiling', () => {
+  const h = harness();
+  h.state.pop = 10;
+  h.state.jobs = { forager: 1, woodcutter: 5 };
+  h.state.res = { food: 100, wood: 0, knowledge: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    thinker: { res: 'knowledge', base: 1 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.jobCapacity = id => id === 'thinker' ? 4 : 10;
+  h.api.helpers.production = () => ({ food: 1, wood: 0, knowledge: 0 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.thinker, 4);
+  assert.equal(h.state.jobs.woodcutter, 5);
+});
+
 test('food emergency reclaims the only thinker for foraging', () => {
   const h = harness();
   h.state.pop = 1;
