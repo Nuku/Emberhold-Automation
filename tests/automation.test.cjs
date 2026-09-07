@@ -148,6 +148,26 @@ test('food workers settle at sustainable production across repeated ticks', () =
   assert.equal(h.state.jobs.forager, 20);
 });
 
+test('starvation overrides non-food sustaining floors', () => {
+  const h = harness();
+  h.state.pop = 54;
+  h.state.jobs = { forager: 4, guard: 12, miner: 50 };
+  h.state.res = { food: 0, stone: 3915 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 0.55 },
+    miner: { res: 'stone', base: 0.28 },
+  };
+  h.api.helpers.capacityOf = () => 3915;
+  h.api.helpers.jobProduction = id => id === 'forager' ? 0.55 : 0.28;
+  h.api.helpers.production = () => ({ food: -0.41, stone: 20.7 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.miner, 0);
+  assert.equal(h.state.jobs.forager, 54);
+});
+
 test('unmet jobs are filled together with bulk totals', () => {
   const h = harness();
   h.state.pop = 5;

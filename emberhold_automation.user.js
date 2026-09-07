@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.6
+// @version      1.25.7
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -229,6 +229,11 @@
     const minimum = id => Math.max(sustainingMinimum(id), id === 'forager' ? 1 :
       (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
         ? 0 : minimums.find(item => item[0] === id)?.[1] || 0));
+    // An empty food store is an emergency. Do not preserve a calculated
+    // sustaining floor for another production job while villagers are
+    // starving; food must be able to reclaim those workers first.
+    const foodEmergency = stock('food') <= 0 || (rates.food || 0) < 0;
+    const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
     const needs = [
       ['forager', 'food', reserve('food')],
       ['woodcutter', 'wood', reserve('wood')],
@@ -291,8 +296,8 @@
     }
 
     const donors = Object.keys(state.jobs || {})
-      .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' && !planned.has(id) && count(id) > minimum(id))
-      .sort((a, b) => count(b) - minimum(b) - (count(a) - minimum(a)));
+      .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' && !planned.has(id) && count(id) > donorMinimum(id))
+      .sort((a, b) => count(b) - donorMinimum(b) - (count(a) - donorMinimum(a)));
     const releases = new Map();
     let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);
     for (const donor of donors) {
@@ -311,7 +316,7 @@
     }
 
     for (const [id, amount] of releases) {
-      const targetCount = count(id) - amount;
+      const targetCount = Math.max(donorMinimum(id), count(id) - amount);
       if (api().actions?.setJob && invoke('setJob', id, targetCount)) continue;
       for (let i = 0; i < amount; i++) invoke('assign', id, -1);
     }
