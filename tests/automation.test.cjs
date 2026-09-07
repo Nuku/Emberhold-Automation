@@ -55,9 +55,9 @@ test('new power telemetry controls Living Blocks and Factories too', () => {
   }});
   h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
   h.autoPower(h.api.getState(), { stone: 10 });
-  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 0]]);
+  assert.deepEqual(h.calls, [['setBuildingPower', 'factory', 0]]);
   assert.equal(h.state.buildingPower.livingBlock, 1);
-  assert.equal(h.state.buildingPower.factory, 1);
+  assert.equal(h.state.buildingPower.factory, 0);
 });
 
 test('power reserves factory capacity and sheds before enabling priority sites', () => {

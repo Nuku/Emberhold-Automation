@@ -509,7 +509,11 @@
     const priority = site => {
       const resource = site.resource;
       if (site.id === 'livingBlock') return 4;
-      if (site.id === 'factory') return 2;
+      // Queue reservations are the next priority after residential capacity.
+      // Factories produce goods, while dig sites produce their reported resource.
+      const output = site.id === 'factory' ? 'goods' : resource;
+      if ((demand[output] || 0) > 0) return 3;
+      if (site.id === 'factory') return 1;
       const stock = state.res[resource] || 0;
       // Compare the rate without this site's boost, so powering a shortage
       // does not immediately demote it on the next automation tick.
