@@ -106,8 +106,9 @@ test('job assignment falls back when the bulk setter does not change the job', (
   const h = harness();
   h.state.pop = 3;
   h.state.res.food = 0;
+  h.api.helpers.production = () => ({ food: -2 });
   h.api.definitions.JOBS = {
-    forager: { res: 'food', base: 0.1 },
+    forager: { res: 'food', base: 1 },
     woodcutter: { res: 'wood', base: 1 },
   };
   h.action('setJob', () => {});
@@ -186,11 +187,11 @@ test('starvation overrides non-food sustaining floors', () => {
 
   h.autoJobs(h.api.getState(), {});
 
-  assert.equal(h.state.jobs.miner, 0);
-  assert.equal(h.state.jobs.forager, 54);
+  assert.equal(h.state.jobs.miner, 49);
+  assert.equal(h.state.jobs.forager, 5);
 });
 
-test('foragers remain assignable when the effective-rate helper reports zero', () => {
+test('zero effective output does not override game production restrictions', () => {
   const h = harness();
   h.state.pop = 6;
   h.state.jobs = { forager: 4, miner: 2 };
@@ -205,27 +206,29 @@ test('foragers remain assignable when the effective-rate helper reports zero', (
 
   h.autoJobs(h.api.getState(), {});
 
-  assert.equal(h.state.jobs.forager, 6);
-  assert.equal(h.state.jobs.miner, 0);
+  assert.equal(h.state.jobs.forager, 4);
+  assert.ok(h.calls.every(call => call[1] !== 'forager'));
 });
 
-test('gross food production is compared against villager upkeep', () => {
+test('queued stone cannot block food recovery or reclaim sustaining foragers', () => {
   const h = harness();
-  h.state.pop = 6;
-  h.state.jobs = { forager: 4, miner: 2, guard: 1 };
-  h.state.res = { food: 20, stone: 100 };
+  h.state.pop = 47;
+  h.state.jobs = { forager: 4, miner: 43, guard: 12 };
+  h.state.res = { food: 0, stone: 3915 };
   h.api.definitions.JOBS = {
-    forager: { res: 'food', base: 0.1 },
+    forager: { res: 'food', base: 0.55 },
     miner: { res: 'stone', base: 1 },
   };
-  h.api.helpers.jobProduction = id => id === 'forager' ? 0.1 : 1;
-  h.api.helpers.production = () => ({ food: 0.4, stone: 2 });
+  h.api.helpers.capacityOf = () => 3915;
+  h.api.helpers.jobProduction = id => id === 'forager' ? 0.55 : 1;
+  h.api.helpers.production = () => ({ food: (h.state.jobs.forager - 4) * 0.55 - 0.41, stone: h.state.jobs.miner });
   h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
 
-  h.autoJobs(h.api.getState(), {});
-
-  assert.equal(h.state.jobs.forager, 6);
-  assert.equal(h.state.jobs.miner, 0);
+  h.autoJobs(h.api.getState(), { stone: 2908 });
+  assert.equal(h.state.jobs.forager, 5);
+  assert.equal(h.state.jobs.miner, 42);
+  for (let i = 0; i < 20; i++) h.autoJobs(h.api.getState(), { stone: 2908 });
+  assert.ok(h.api.helpers.production().food > 0);
 });
 
 test('unmet jobs are filled together with bulk totals', () => {
