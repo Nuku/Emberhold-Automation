@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.0
+// @version      1.26.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -251,11 +251,6 @@
     const minimum = id => Math.max(sustainingMinimum(id), id === 'forager' ? 1 :
       (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
         ? 0 : minimums.find(item => item[0] === id)?.[1] || 0));
-    // An empty food store is an emergency. Do not preserve a calculated
-    // sustaining floor for another production job while villagers are
-    // starving; food must be able to reclaim those workers first.
-    const foodEmergency = stock('food') <= 0 || (rates.food || 0) < 0;
-    const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
     const needs = [
       ['forager', 'food', reserve('food')],
       ['woodcutter', 'wood', reserve('wood')],
@@ -297,11 +292,27 @@
 
     const available = availableWorkers(state);
     const perWorker = id => Math.max(0, Number(effectiveJobRate?.(id) || defs[id]?.base || 0));
+    const foodOutput = Object.entries(state.jobs || {}).reduce((sum, [id, workers]) =>
+      sum + (defs[id]?.res === 'food' ? Number(workers || 0) * perWorker(id) : 0), 0);
+    const guards = Object.values(state.jobs || {}).length && Number(state.jobs.guard || 0);
+    const reportedFoodRate = Number(rates.food);
+    // Some game builds expose gross production here while the UI reports net
+    // production. Detect that shape and subtract the documented upkeep.
+    const foodRate = Number.isFinite(reportedFoodRate) &&
+      Math.abs(reportedFoodRate - foodOutput) <= Math.max(0.05, Math.abs(foodOutput) * 0.05)
+      ? reportedFoodRate - Number(state.pop || 0) * 0.12 - guards * 0.2
+      : (Number.isFinite(reportedFoodRate) ? reportedFoodRate : 0);
+    // An empty or net-negative food store is an emergency. Do not preserve a
+    // calculated sustaining floor for another production job while villagers
+    // are starving; food must be able to reclaim those workers first.
+    const foodEmergency = stock('food') <= 0 || foodRate < 0;
+    const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
     const neededWorkers = (id, resource, target) => {
       const rate = perWorker(id);
       if (!rate) return 0;
       const deficit = Math.max(0, target - stock(resource));
-      const shortage = Math.max(0, -(rates[resource] || 0));
+      const currentRate = resource === 'food' ? foodRate : (rates[resource] || 0);
+      const shortage = Math.max(0, -currentRate);
       return Math.max(deficit ? Math.ceil(deficit / rate) : 0,
         shortage ? Math.ceil(shortage / rate) : 0);
     };

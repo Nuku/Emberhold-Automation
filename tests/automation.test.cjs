@@ -107,7 +107,7 @@ test('job assignment falls back when the bulk setter does not change the job', (
   h.state.pop = 3;
   h.state.res.food = 0;
   h.api.definitions.JOBS = {
-    forager: { res: 'food', base: 1 },
+    forager: { res: 'food', base: 0.1 },
     woodcutter: { res: 'wood', base: 1 },
   };
   h.action('setJob', () => {});
@@ -201,6 +201,25 @@ test('foragers remain assignable when the effective-rate helper reports zero', (
   };
   h.api.helpers.jobProduction = id => id === 'forager' ? 0 : 0.28;
   h.api.helpers.production = () => ({ food: -0.41, stone: 0.56 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.forager, 6);
+  assert.equal(h.state.jobs.miner, 0);
+});
+
+test('gross food production is compared against villager upkeep', () => {
+  const h = harness();
+  h.state.pop = 6;
+  h.state.jobs = { forager: 4, miner: 2, guard: 1 };
+  h.state.res = { food: 20, stone: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 0.1 },
+    miner: { res: 'stone', base: 1 },
+  };
+  h.api.helpers.jobProduction = id => id === 'forager' ? 0.1 : 1;
+  h.api.helpers.production = () => ({ food: 0.4, stone: 2 });
   h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
 
   h.autoJobs(h.api.getState(), {});
