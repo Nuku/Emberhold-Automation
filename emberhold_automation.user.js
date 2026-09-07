@@ -212,7 +212,8 @@
     const defs = definitions().JOBS || {};
     const effectiveJobRate = api().helpers?.jobProduction;
     const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]) &&
-      (!effectiveJobRate || effectiveJobRate(id) > 0));
+      (!effectiveJobRate || effectiveJobRate(id) > 0 ||
+        (id === 'forager' && Number(defs[id].base) > 0)));
 
     const count = id => Number(state.jobs?.[id] || 0);
     const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));

@@ -190,6 +190,25 @@ test('starvation overrides non-food sustaining floors', () => {
   assert.equal(h.state.jobs.forager, 54);
 });
 
+test('foragers remain assignable when the effective-rate helper reports zero', () => {
+  const h = harness();
+  h.state.pop = 6;
+  h.state.jobs = { forager: 4, miner: 2 };
+  h.state.res = { food: 0, stone: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 0.55 },
+    miner: { res: 'stone', base: 0.28 },
+  };
+  h.api.helpers.jobProduction = id => id === 'forager' ? 0 : 0.28;
+  h.api.helpers.production = () => ({ food: -0.41, stone: 0.56 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.forager, 6);
+  assert.equal(h.state.jobs.miner, 0);
+});
+
 test('unmet jobs are filled together with bulk totals', () => {
   const h = harness();
   h.state.pop = 5;
