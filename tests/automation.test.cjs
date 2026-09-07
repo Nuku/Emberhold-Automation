@@ -295,6 +295,25 @@ test('remaining workers fill a useful open job after priority allocations', () =
   assert.equal(h.availableWorkers(h.state), 0);
 });
 
+test('idle workers use open background jobs when no queue has priority', () => {
+  const h = harness();
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1 };
+  h.state.res = { food: 100, wood: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, wood: 1 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.woodcutter, 4);
+  assert.equal(h.availableWorkers(h.state), 0);
+});
+
 test('food emergency reclaims the only thinker for foraging', () => {
   const h = harness();
   h.state.pop = 1;

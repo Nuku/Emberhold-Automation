@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.27.0
+// @version      1.27.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -408,9 +408,13 @@
       const fallback = assignable
         .filter(id => {
           const limit = jobLimit(id);
-          return needsWork(id) && (!Number.isFinite(limit) || jobCount(id) < limit);
+          return (!Number.isFinite(limit) || jobCount(id) < limit) &&
+            (id !== 'forager' || !assignable.some(other => other !== 'forager' &&
+              (!Number.isFinite(jobLimit(other)) || jobCount(other) < jobLimit(other))));
         })
-        .sort((a, b) => Number(needsWork(b)) - Number(needsWork(a)) ||
+        .sort((a, b) => Number(Number.isFinite(jobLimit(b)) && jobLimit(b) < state.pop) -
+          Number(Number.isFinite(jobLimit(a)) && jobLimit(a) < state.pop) ||
+          Number(needsWork(b)) - Number(needsWork(a)) ||
           jobOrder.indexOf(a) - jobOrder.indexOf(b))[0];
       if (fallback) {
         const limit = jobLimit(fallback);
@@ -423,7 +427,7 @@
     if (!planned.size && !filledFallback) {
       // With no idle workers and no unmet priority, trim a surplus producer
       // back toward its sustaining minimum on the next tick.
-      const donor = donors[0];
+      const donor = donors.find(id => id === 'forager');
       if (donor) releaseWorkers(donor, 1);
     }
   }
