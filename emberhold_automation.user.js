@@ -486,8 +486,8 @@
     }
   }
 
-  // The current engine checks factory capacity without including it in
-  // getPower().used, and does not export this constant through definitions.
+  // Keep the legacy reserve for older API snapshots. Newer snapshots expose
+  // factories and Living Blocks as controllable power buildings themselves.
   const FACTORY_POWER_REQUIREMENT = 1.5;
 
   function autoPower(state, demand) {
@@ -497,14 +497,19 @@
     const sites = Object.entries(power.buildings);
     if (sites.some(([, site]) => !['built', 'enabled', 'used', 'powerPerBuilding']
       .every(key => Number.isFinite(site[key])) || site.powerPerBuilding <= 0)) return;
-    // Reclaim optional loads, retaining mandatory housing and factory capacity.
+    const hasAllControls = sites.some(([id]) => id === 'factory') &&
+      sites.some(([id]) => id === 'livingBlock');
     const optionalUsed = sites.reduce((sum, [, site]) => sum + site.used, 0);
-    let budget = Math.max(0, power.generated - Math.max(0, power.used - optionalUsed) -
-      (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
+    let budget = hasAllControls
+      ? Math.max(0, power.generated)
+      : Math.max(0, power.generated - Math.max(0, power.used - optionalUsed) -
+        (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
     const rates = api().helpers?.production?.(1) || {};
     const jobs = definitions().JOBS || {};
     const priority = site => {
       const resource = site.resource;
+      if (site.id === 'livingBlock') return 4;
+      if (site.id === 'factory') return 2;
       const stock = state.res[resource] || 0;
       // Compare the rate without this site's boost, so powering a shortage
       // does not immediately demote it on the next automation tick.
@@ -521,7 +526,7 @@
       const capacity = api().helpers?.capacityOf?.(resource);
       return !Number.isFinite(capacity) || stock < capacity ? 1 : 0;
     };
-    const ranked = sites.map(([id, site]) => ({ id, site, priority: priority(site) }))
+    const ranked = sites.map(([id, site]) => ({ id, site: { ...site, id }, priority: priority({ ...site, id }) }))
       .sort((a, b) => b.priority - a.priority ||
         Number(b.site.resource === 'coal') - Number(a.site.resource === 'coal') ||
         a.id.localeCompare(b.id));

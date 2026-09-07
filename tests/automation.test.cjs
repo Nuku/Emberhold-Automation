@@ -44,6 +44,22 @@ function powerHarness(generated = 3, housing = 0) {
   return h;
 }
 
+test('new power telemetry controls Living Blocks and Factories too', () => {
+  const h = powerHarness(2.5);
+  h.state.bld = { livingBlock: 1, factory: 1 };
+  h.state.buildingPower = { livingBlock: 1, quarry: 5, coalSeam: 0, factory: 1 };
+  h.api.getPower = () => ({ generated: 2.5, used: 2.5, buildings: {
+    livingBlock: { built: 1, enabled: h.state.buildingPower.livingBlock, active: h.state.buildingPower.livingBlock, used: 1, powerPerBuilding: 1 },
+    quarry: { built: 5, enabled: h.state.buildingPower.quarry, active: 5, used: 1, powerPerBuilding: .2, resource: 'stone' },
+    factory: { built: 1, enabled: h.state.buildingPower.factory, active: h.state.buildingPower.factory, used: 1.5, powerPerBuilding: 1.5 },
+  }});
+  h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
+  h.autoPower(h.api.getState(), { stone: 10 });
+  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 0]]);
+  assert.equal(h.state.buildingPower.livingBlock, 1);
+  assert.equal(h.state.buildingPower.factory, 1);
+});
+
 test('power reserves factory capacity and sheds before enabling priority sites', () => {
   const h = powerHarness();
   h.autoPower(h.api.getState(), {});
