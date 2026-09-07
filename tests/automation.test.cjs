@@ -13,7 +13,7 @@ function harness() {
   const context = vm.createContext({ window: { emberhold: api }, console,
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
-    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings,
+    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoPower,
       autoCraft, autoResearch, autoExpeditions, automationStep, availableWorkers, boot };
   `), context);
   function action(name, fn) {
@@ -21,6 +21,100 @@ function harness() {
   }
   return { state, api, calls, action, ...context.window.test, context };
 }
+
+function powerHarness(generated = 3, housing = 0) {
+  const h = harness();
+  h.state.bld.factory = 1;
+  h.state.buildingPower = { quarry: 5, coalSeam: 0 };
+  h.api.helpers.capacityOf = () => 100;
+  h.api.helpers.production = () => ({ stone: 1, coal: -1 });
+  h.api.getPower = () => {
+    let available = Math.max(0, generated - housing);
+    const buildings = {};
+    for (const [id, resource] of [['quarry', 'stone'], ['coalSeam', 'coal']]) {
+      const enabled = h.state.buildingPower[id];
+      const active = Math.min(enabled, Math.floor((available + 1e-9) / 0.2));
+      available -= active * 0.2;
+      buildings[id] = { built: 5, enabled, active, used: active * 0.2,
+        powerPerBuilding: 0.2, resource, productionBonus: active * 0.1 };
+    }
+    return { generated, used: housing + Object.values(buildings).reduce((sum, b) => sum + b.used, 0), buildings };
+  };
+  h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
+  return h;
+}
+
+test('power reserves factory capacity and sheds before enabling priority sites', () => {
+  const h = powerHarness();
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 2], ['setBuildingPower', 'coalSeam', 5]]);
+  assert.ok(h.api.getPower().generated - h.api.getPower().used >= 1.5);
+  h.autoPower(h.api.getState(), {});
+  assert.equal(h.calls.length, 2, 'stable allocation must not issue repeated setters');
+});
+
+test('housing and a factory shortfall switch off optional loads', () => {
+  const h = powerHarness(2, 1);
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 0]]);
+});
+
+test('power allocates whole buildings and prioritizes unmet queued resources', () => {
+  const h = powerHarness(0.6);
+  h.state.bld.factory = 0;
+  h.api.helpers.production = () => ({ stone: 1, coal: 1 });
+  h.autoPower(h.api.getState(), { stone: 10 });
+  assert.equal(h.state.buildingPower.quarry, 3);
+  assert.equal(h.state.buildingPower.coalSeam, 0);
+});
+
+test('full storage releases power and zero generation disables all optional loads', () => {
+  const h = powerHarness();
+  h.state.res.stone = 100;
+  h.autoPower(h.api.getState(), {});
+  assert.equal(h.state.buildingPower.quarry, 0);
+  assert.equal(h.state.buildingPower.coalSeam, 5);
+  const empty = powerHarness(0);
+  empty.autoPower(empty.api.getState(), {});
+  assert.equal(empty.state.buildingPower.quarry, 0);
+});
+
+test('failed and partially applied load shedding never enables replacement loads', () => {
+  for (const partial of [false, true]) {
+    const h = powerHarness();
+    h.action('setBuildingPower', () => {
+      if (partial) h.state.buildingPower.quarry = 4;
+      return partial;
+    });
+    h.autoPower(h.api.getState(), {});
+    assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 2]]);
+  }
+});
+
+test('power toggle and missing or invalid telemetry perform no mutations', () => {
+  const h = powerHarness();
+  for (const key of Object.keys(h.settings)) h.settings[key] = false;
+  h.settings.enabled = true;
+  h.automationStep();
+  assert.deepEqual(h.calls, []);
+  delete h.api.getPower;
+  h.autoPower(h.api.getState(), {});
+  h.state.power = { generated: NaN, used: 0, buildings: {} };
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, []);
+});
+
+test('snapshot telemetry and legacy action dispatcher are supported', () => {
+  const h = powerHarness();
+  const getPower = h.api.getPower;
+  h.api.getState = () => structuredClone({ ...h.state, power: getPower() });
+  delete h.api.getPower;
+  const setter = h.api.actions.setBuildingPower;
+  delete h.api.actions.setBuildingPower;
+  h.api.action = (name, ...args) => setter(...args);
+  h.autoPower(h.api.getState(), {});
+  assert.equal(h.state.buildingPower.coalSeam, 5);
+});
 
 test('each stage refreshes resources and preserves queued reserves', () => {
   const h = harness();

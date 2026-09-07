@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.27.2
+// @version      1.28.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -21,6 +21,7 @@
     jobs: true,
     research: true,
     buildings: true,
+    power: true,
     crafting: true,
     diplomacy: true,
     expeditions: true,
@@ -485,6 +486,62 @@
     }
   }
 
+  // The current engine checks factory capacity without including it in
+  // getPower().used, and does not export this constant through definitions.
+  const FACTORY_POWER_REQUIREMENT = 1.5;
+
+  function autoPower(state, demand) {
+    const power = state.power || api().getPower?.();
+    if (!power || !Number.isFinite(power.generated) || !Number.isFinite(power.used) ||
+        !power.buildings || !(api().actions?.setBuildingPower || api().action)) return;
+    const sites = Object.entries(power.buildings);
+    if (sites.some(([, site]) => !['built', 'enabled', 'used', 'powerPerBuilding']
+      .every(key => Number.isFinite(site[key])) || site.powerPerBuilding <= 0)) return;
+    // Reclaim optional loads, retaining mandatory housing and factory capacity.
+    const optionalUsed = sites.reduce((sum, [, site]) => sum + site.used, 0);
+    let budget = Math.max(0, power.generated - Math.max(0, power.used - optionalUsed) -
+      (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
+    const rates = api().helpers?.production?.(1) || {};
+    const jobs = definitions().JOBS || {};
+    const priority = site => {
+      const resource = site.resource;
+      const stock = state.res[resource] || 0;
+      // Compare the rate without this site's boost, so powering a shortage
+      // does not immediately demote it on the next automation tick.
+      let baseline = rates[resource] || 0;
+      if (site.productionBonus > 0 && api().helpers?.jobProduction) {
+        for (const [id, job] of Object.entries(jobs)) {
+          if (job.res === resource && !job.targeted) baseline -=
+            (state.jobs[id] || 0) * api().helpers.jobProduction(id) *
+            site.productionBonus / (1 + site.productionBonus);
+        }
+      }
+      if (baseline < -1e-9) return 3;
+      if ((demand[resource] || 0) > stock) return 2;
+      const capacity = api().helpers?.capacityOf?.(resource);
+      return !Number.isFinite(capacity) || stock < capacity ? 1 : 0;
+    };
+    const ranked = sites.map(([id, site]) => ({ id, site, priority: priority(site) }))
+      .sort((a, b) => b.priority - a.priority ||
+        Number(b.site.resource === 'coal') - Number(a.site.resource === 'coal') ||
+        a.id.localeCompare(b.id));
+    const targets = ranked.map(({ id, site, priority }) => {
+      const count = priority ? Math.min(Math.floor(site.built),
+        Math.floor((budget + 1e-9) / site.powerPerBuilding)) : 0;
+      budget = Math.max(0, budget - count * site.powerPerBuilding);
+      return { id, count, enabled: site.enabled };
+    });
+    // Shed loads first. Stop on failure rather than enabling against capacity
+    // that the game did not actually release.
+    for (const target of targets.filter(t => t.count < t.enabled)
+      .concat(targets.filter(t => t.count > t.enabled))) {
+      if (!invoke('setBuildingPower', target.id, target.count)) return;
+      const current = snapshot();
+      const actual = (current.power || api().getPower?.())?.buildings?.[target.id]?.enabled;
+      if (actual !== target.count) return;
+    }
+  }
+
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
@@ -569,7 +626,7 @@
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
       for (const [setting, step] of [
-        ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
+        ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
       ]) {
@@ -596,7 +653,7 @@
       <div class="ea-grid">${[
         ['jobs', 'Jobs'], ['research', 'Research'], ['buildings', 'Buildings'],
         ['crafting', 'Crafting'], ['diplomacy', 'Diplomacy'],
-        ['expeditions', 'Expeditions'],
+        ['expeditions', 'Expeditions'], ['power', 'Power'],
       ].map(([id, label]) => `<label><input data-setting="${id}" type="checkbox"> ${label}</label>`).join('')}</div>
       <label>Loop delay <select data-setting="interval"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option><option value="5000">5s</option></select></label>
       <div class="ea-status" data-status>Waiting for Emberhold</div></div>`;
@@ -619,7 +676,13 @@
   function updatePanel(state) {
     const status = document.querySelector('#emberhold-automation [data-status]');
     const current = state?.state || state;
-    if (status) status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}`;
+    const power = current?.power;
+    const powerText = power && Number.isFinite(power.generated) && Number.isFinite(power.used)
+      ? ` · Power ${power.generated.toFixed(1)} in / ${power.used.toFixed(1)} used; factories reserve ${((current.bld?.factory || 0) * FACTORY_POWER_REQUIREMENT).toFixed(1)}` : '';
+    if (status) {
+      status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}${powerText}`;
+      status.title = status.textContent;
+    }
   }
 
   function restart() {
