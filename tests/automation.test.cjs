@@ -191,6 +191,44 @@ test('starvation overrides non-food sustaining floors', () => {
   assert.equal(h.state.jobs.forager, 5);
 });
 
+test('surplus workers are assigned to thinkers up to their cap', () => {
+  const h = harness();
+  h.state.pop = 10;
+  h.state.jobs = { forager: 1, woodcutter: 1 };
+  h.state.res = { food: 100, wood: 100, knowledge: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    thinker: { res: 'knowledge', base: 1, max: 3 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, wood: 1, knowledge: 0 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.thinker, 3);
+});
+
+test('food emergency reclaims the only thinker for foraging', () => {
+  const h = harness();
+  h.state.pop = 1;
+  h.state.jobs = { thinker: 1 };
+  h.state.res = { food: 0, knowledge: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    thinker: { res: 'knowledge', base: 1, max: 1 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: -1, knowledge: 1 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.thinker, 0);
+  assert.equal(h.state.jobs.forager, 1);
+});
+
 test('zero effective output does not override game production restrictions', () => {
   const h = harness();
   h.state.pop = 6;

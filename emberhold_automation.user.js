@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.2
+// @version      1.26.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -317,6 +317,14 @@
     // are starving; food must be able to reclaim those workers first.
     const foodEmergency = stock('food') <= 0 || foodRate < 0;
     const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
+    // Thinkers are the default destination for surplus population. Respect a
+    // cap when the game exposes one, while treating population as the upper
+    // bound for older builds. Food emergencies deliberately skip this fill so
+    // the last available worker can be sent to the farms instead.
+    const thinkerLimit = Math.max(count('thinker'), Math.min(
+      state.pop,
+      Number.isFinite(Number(defs.thinker?.max)) ? Number(defs.thinker.max) :
+        Number.isFinite(Number(defs.thinker?.limit)) ? Number(defs.thinker.limit) : state.pop));
     const neededWorkers = (id, resource, target) => {
       const rate = perWorker(id);
       if (!rate) return 0;
@@ -329,6 +337,7 @@
     const planned = new Map();
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
+      if (foodEmergency && id === 'thinker') continue;
       const amount = neededWorkers(id, resource, target);
       if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
     }
@@ -336,6 +345,10 @@
       if (minimumCount > 0 && assignable.includes(id) && count(id) < minimum(id)) {
         planned.set(id, Math.max(planned.get(id) || 0, minimum(id) - count(id)));
       }
+    }
+    if (!foodEmergency && assignable.includes('thinker')) {
+      planned.set('thinker', Math.max(planned.get('thinker') || 0,
+        thinkerLimit - count('thinker')));
     }
 
     const donors = Object.keys(state.jobs || {})
