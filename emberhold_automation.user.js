@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.7
+// @version      1.25.8
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -398,8 +398,11 @@
       const request = entry.request;
       if (entry.disposition >= 100) continue;
       if (request && affordable({ [request.res]: request.amount }, state, demand)) {
-        invoke('supplyDiplomacyRequest', id);
-        return;
+        const previousAction = lastAction;
+        if (invoke('supplyDiplomacyRequest', id)) return;
+        // A stale or already-satisfied request must not mask other automation
+        // stages with a permanent "No change" status.
+        lastAction = previousAction;
       }
     }
   }
