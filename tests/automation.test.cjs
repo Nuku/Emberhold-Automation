@@ -252,6 +252,27 @@ test('limited jobs fill before queued resource staffing', () => {
   assert.equal(h.state.jobs.miner, 2);
 });
 
+test('queue demand does not retry a job that is already at capacity', () => {
+  const h = harness();
+  h.state.pop = 8;
+  h.state.jobs = { forager: 1, miner: 4 };
+  h.state.res = { food: 100, stone: 0, wood: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    miner: { res: 'stone', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.jobCapacity = id => id === 'miner' ? 4 : 8;
+  h.api.helpers.production = () => ({ food: 1, stone: 0, wood: 1 });
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+
+  h.autoJobs(h.api.getState(), { stone: 100 });
+
+  assert.ok(h.calls.every(call => call[1] !== 'miner'));
+  assert.equal(h.state.jobs.miner, 4);
+});
+
 test('remaining workers fill a useful open job after priority allocations', () => {
   const h = harness();
   h.state.pop = 8;

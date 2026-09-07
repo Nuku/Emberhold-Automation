@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.7
+// @version      1.26.8
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -338,6 +338,11 @@
       return Math.max(deficit ? Math.ceil(deficit / rate) : 0,
         shortage ? Math.ceil(shortage / rate) : 0);
     };
+    const availableJobRoom = id => {
+      const limit = jobLimit(id);
+      return Number.isFinite(limit) ? Math.max(0, limit - count(id)) : Infinity;
+    };
+    const plannedAmount = (id, amount) => Math.min(amount, availableJobRoom(id));
     const planned = new Map();
     if (!foodEmergency) {
       for (const id of assignable) {
@@ -350,12 +355,13 @@
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
       if (foodEmergency && id === 'thinker') continue;
-      const amount = neededWorkers(id, resource, target);
+      const amount = plannedAmount(id, neededWorkers(id, resource, target));
       if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
     }
     for (const [id, minimumCount] of minimums) {
       if (minimumCount > 0 && assignable.includes(id) && count(id) < minimum(id)) {
-        planned.set(id, Math.max(planned.get(id) || 0, minimum(id) - count(id)));
+        const amount = plannedAmount(id, minimum(id) - count(id));
+        if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
       }
     }
 
