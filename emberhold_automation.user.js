@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.5
+// @version      1.26.7
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -317,18 +317,18 @@
     // are starving; food must be able to reclaim those workers first.
     const foodEmergency = stock('food') <= 0 || foodRate < 0;
     const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
-    // Thinkers are the default destination for surplus population. Respect a
-    // cap when the game exposes one, while treating population as the upper
-    // bound for older builds. Food emergencies deliberately skip this fill so
-    // the last available worker can be sent to the farms instead.
+    // Limited jobs get first claim on non-emergency population. This keeps
+    // jobs such as miners and thinkers full even when a queue is requesting a
+    // different resource. Food emergencies deliberately skip this fill so the
+    // last available worker can be sent to the farms instead.
     const jobCapacity = api().helpers?.jobCapacity;
-    const reportedThinkerCapacity = typeof jobCapacity === 'function'
-      ? Number(jobCapacity('thinker')) : NaN;
-    const thinkerLimit = Math.max(count('thinker'), Math.min(
-      state.pop,
-      Number.isFinite(reportedThinkerCapacity) ? reportedThinkerCapacity :
-        Number.isFinite(Number(defs.thinker?.max)) ? Number(defs.thinker.max) :
-          Number.isFinite(Number(defs.thinker?.limit)) ? Number(defs.thinker.limit) : state.pop));
+    const jobLimit = id => {
+      const reported = typeof jobCapacity === 'function' ? Number(jobCapacity(id)) : NaN;
+      if (Number.isFinite(reported)) return reported;
+      if (Number.isFinite(Number(defs[id]?.max))) return Number(defs[id].max);
+      if (Number.isFinite(Number(defs[id]?.limit))) return Number(defs[id].limit);
+      return NaN;
+    };
     const neededWorkers = (id, resource, target) => {
       const rate = perWorker(id);
       if (!rate) return 0;
@@ -339,11 +339,13 @@
         shortage ? Math.ceil(shortage / rate) : 0);
     };
     const planned = new Map();
-    // Thinkers get first claim on non-emergency population. Other production
-    // jobs may still retain their minimum, but surplus workers are available
-    // for the thinker cap even when those jobs have a stockpile deficit.
-    if (!foodEmergency && assignable.includes('thinker')) {
-      planned.set('thinker', Math.max(0, thinkerLimit - count('thinker')));
+    if (!foodEmergency) {
+      for (const id of assignable) {
+        const limit = jobLimit(id);
+        if (Number.isFinite(limit) && limit < state.pop && count(id) < limit) {
+          planned.set(id, limit - count(id));
+        }
+      }
     }
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
@@ -383,13 +385,29 @@
       releaseWorkers(id, Math.max(0, count(id) - targetCount));
     }
     for (const [id, amount] of additions) assignWorkers(id, amount, state);
-    if (!planned.size) {
-      const donor = donors[0];
-      if (donor) {
-        const targetCount = count(donor) - 1;
-        if (api().actions?.setJob && invoke('setJob', donor, targetCount)) return;
-        invoke('assign', donor, -1);
+    const remainingWorkers = availableWorkers(snapshot());
+    let filledFallback = false;
+    if (remainingWorkers > 0) {
+      const fallback = assignable
+        .filter(id => {
+          const limit = jobLimit(id);
+          return needsWork(id) && (!Number.isFinite(limit) || jobCount(id) < limit);
+        })
+        .sort((a, b) => Number(needsWork(b)) - Number(needsWork(a)) ||
+          JOB_ORDER.indexOf(a) - JOB_ORDER.indexOf(b))[0];
+      if (fallback) {
+        const limit = jobLimit(fallback);
+        const room = Number.isFinite(limit) ? Math.max(0, limit - jobCount(fallback)) : remainingWorkers;
+        const before = jobCount(fallback);
+        assignWorkers(fallback, Math.min(remainingWorkers, room), snapshot());
+        filledFallback = jobCount(fallback) > before;
       }
+    }
+    if (!planned.size && !filledFallback) {
+      // With no idle workers and no unmet priority, trim a surplus producer
+      // back toward its sustaining minimum on the next tick.
+      const donor = donors[0];
+      if (donor) releaseWorkers(donor, 1);
     }
   }
 

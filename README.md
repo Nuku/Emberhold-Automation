@@ -10,6 +10,6 @@ The script uses the page's synchronous `window.emberhold` API. It refreshes stat
 
 Run the regression checks with `node --test tests/automation.test.cjs`.
 
-Food deficits are handled before queued-project staffing: miners can donate workers even when a queued project still demands Stone. The planner uses the game's net production rate directly.
+Food deficits are handled before queued-project staffing: miners can donate workers even when a queued project still demands Stone. Other jobs with a population-limited capacity are filled before queue-specific staffing. The planner uses the game's net production rate directly.
 
 For a real-engine reproduction of the reported winter starvation state, run `node tests/game-integration.cjs <save-export.txt>` with GitHub CLI available. This reads the upstream game source and simulates the save in memory, without changing a live game.
