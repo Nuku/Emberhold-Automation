@@ -199,9 +199,10 @@ test('surplus workers are assigned to thinkers up to their cap', () => {
   h.api.definitions.JOBS = {
     forager: { res: 'food', base: 1 },
     woodcutter: { res: 'wood', base: 1 },
-    thinker: { res: 'knowledge', base: 1, max: 3 },
+    thinker: { res: 'knowledge', base: 1 },
   };
   h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.jobCapacity = id => id === 'thinker' ? 3 : 10;
   h.api.helpers.production = () => ({ food: 1, wood: 1, knowledge: 0 });
   h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
 

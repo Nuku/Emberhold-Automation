@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.3
+// @version      1.26.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -321,10 +321,14 @@
     // cap when the game exposes one, while treating population as the upper
     // bound for older builds. Food emergencies deliberately skip this fill so
     // the last available worker can be sent to the farms instead.
+    const jobCapacity = api().helpers?.jobCapacity;
+    const reportedThinkerCapacity = typeof jobCapacity === 'function'
+      ? Number(jobCapacity('thinker')) : NaN;
     const thinkerLimit = Math.max(count('thinker'), Math.min(
       state.pop,
-      Number.isFinite(Number(defs.thinker?.max)) ? Number(defs.thinker.max) :
-        Number.isFinite(Number(defs.thinker?.limit)) ? Number(defs.thinker.limit) : state.pop));
+      Number.isFinite(reportedThinkerCapacity) ? reportedThinkerCapacity :
+        Number.isFinite(Number(defs.thinker?.max)) ? Number(defs.thinker.max) :
+          Number.isFinite(Number(defs.thinker?.limit)) ? Number(defs.thinker.limit) : state.pop));
     const neededWorkers = (id, resource, target) => {
       const rate = perWorker(id);
       if (!rate) return 0;
