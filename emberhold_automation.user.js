@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.25.4
+// @version      1.25.6
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -24,8 +24,6 @@
     crafting: true,
     diplomacy: true,
     expeditions: true,
-    trials: false,
-    migration: false,
     interval: 1000,
   };
 
@@ -67,7 +65,12 @@
       return false;
     }
     try {
-      action(...args);
+      const before = JSON.stringify(snapshot());
+      const result = action(...args);
+      if (result === false || JSON.stringify(snapshot()) === before) {
+        lastAction = `No change: ${name}`;
+        return false;
+      }
     } catch (error) {
       lastAction = `Error in ${name}: ${error?.message || error}`;
       console.error('[Emberhold Automation]', lastAction, error);
@@ -102,6 +105,52 @@
     }
   }
 
+  function availableWorkers(state) {
+    if (typeof api().helpers?.unassigned === 'function') {
+      return Math.max(0, api().helpers.unassigned());
+    }
+    const assigned = Object.entries(state.jobs || {})
+      .filter(([id]) => id !== 'guard')
+      .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
+    const diplomats = Object.values(state.diplomats || {})
+      .reduce((sum, n) => sum + (Number(n) || 0), 0);
+    return Math.max(0, state.pop - assigned - diplomats);
+  }
+
+  function jobCount(id) {
+    return Number(snapshot()?.jobs?.[id] || 0);
+  }
+
+  function assignWorkers(id, amount, state) {
+    const count = Number(state.jobs?.[id] || 0);
+    const requested = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!requested) return false;
+
+    // Current builds expose setJob, while older builds expose assign(job, delta).
+    // Do not trust the presence of setJob alone: some game versions expose the
+    // name but reject a bulk update when the requested count exceeds capacity.
+    if (api().actions?.setJob) {
+      const expected = count + requested;
+      if (invoke('setJob', id, expected) && jobCount(id) >= expected) return true;
+    }
+
+    const remaining = Math.max(0, count + requested - jobCount(id));
+    let changed = false;
+    for (let i = 0; i < remaining; i++) {
+      if (!invoke('assign', id, 1)) break;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function craftable(def, state) {
+    if (!unlocked(def, state)) return false;
+    if (def.id === 'tools' && state.trial?.id === 'tinkering') return false;
+    const capacityOf = api().helpers?.capacityOf;
+    return !capacityOf || Object.keys(def.give || {}).every(id =>
+      (state.res[id] || 0) < capacityOf(id));
+  }
+
   // The order is intentionally explicit: it is easy to adjust for a different
   // strategy without changing the controller or Emberhold itself.
   const RESEARCH_ORDER = [
@@ -126,9 +175,7 @@
     const performer = definitions().JOBS?.performer;
     if (!performer || !jobUnlocked(performer)) return false;
     const performers = Number(state.jobs?.performer || 0);
-    const assigned = Object.values(state.jobs || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
-    const diplomats = Object.values(state.diplomats || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
-    const available = Math.max(0, state.pop - assigned - diplomats);
+    const available = availableWorkers(state);
     if ((state.morale || 0) < 100 && available > 0) {
       invoke('assignPerformer', 1);
       return Number(api().getState()?.jobs?.performer || 0) > performers;
@@ -145,7 +192,6 @@
     const effectiveJobRate = api().helpers?.jobProduction;
     const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]) &&
       (!effectiveJobRate || effectiveJobRate(id) > 0));
-    if (!assignable.length) return;
 
     const count = id => Number(state.jobs?.[id] || 0);
     const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
@@ -169,9 +215,20 @@
       if (resource === 'currency') return stock('currency') < currencyTarget || (rates.currency || 0) < 0;
       return stock(resource) < reserve(resource) || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
     };
-    const minimum = id => id === 'forager' ? 1 :
+    // Keep the workers whose output offsets consumption. A positive net rate
+    // with the current workforce does not mean the whole workforce is surplus.
+    const sustainingMinimum = id => {
+      const resource = defs[id]?.res;
+      const perWorker = effectiveJobRate?.(id);
+      if (!(perWorker > 0) || !Number.isFinite(rates[resource])) {
+        return id === 'forager' ? count(id) : 0;
+      }
+      return Math.max(0, Math.min(count(id),
+        Math.ceil(count(id) - rates[resource] / perWorker - 1e-9)));
+    };
+    const minimum = id => Math.max(sustainingMinimum(id), id === 'forager' ? 1 :
       (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
-        ? 0 : minimums.find(item => item[0] === id)?.[1] || 0);
+        ? 0 : minimums.find(item => item[0] === id)?.[1] || 0));
     const needs = [
       ['forager', 'food', reserve('food')],
       ['woodcutter', 'wood', reserve('wood')],
@@ -186,24 +243,18 @@
       .filter(id => defs[id].res && Number(defs[id].base) > 0 && (demand[defs[id].res] || 0) > 0)
       .map(id => [id, defs[id].res,
         Math.max(reserve(defs[id].res), Math.ceil((demand[defs[id].res] || 0) * 0.10))]);
-    const need = [...demandNeeds, ...needs, ...specialistNeeds].find(([job, resource, target]) => assignable.includes(job) &&
-      (stock(resource) < target || (rates[resource] || 0) < 0));
-    const targetForNeed = need && need[0];
-
-    if (assignable.includes('diplomat') && api()?.actions?.assignDiplomat) {
+    if (settings.diplomacy && defs.diplomat && jobUnlocked(defs.diplomat) &&
+        (api()?.actions?.assignDiplomat || api()?.action)) {
       for (const [id, count] of Object.entries(state.diplomats || {})) {
         if (count > 0 && state.diplomacy?.[id]?.disposition >= 100) {
-          pausedDiplomats[id] = (pausedDiplomats[id] || 0) + 1;
-          invoke('assignDiplomat', id, -1);
-          return;
+          if (invoke('assignDiplomat', id, -1)) {
+            pausedDiplomats[id] = (pausedDiplomats[id] || 0) + 1;
+            return;
+          }
         }
       }
 
-      const assigned = Object.values(state.jobs || {})
-        .reduce((sum, n) => sum + (Number(n) || 0), 0) +
-        Object.values(state.diplomats || {})
-          .reduce((sum, n) => sum + (Number(n) || 0), 0);
-      const available = Math.max(0, state.pop - assigned);
+      const available = availableWorkers(state);
       if (available > 0) {
         for (const [id, count] of Object.entries(pausedDiplomats)) {
           if (count > 0 && state.diplomacy?.[id]?.disposition < 100) {
@@ -215,72 +266,74 @@
         }
       }
     }
+    if (!assignable.length) return;
 
-    const assigned = Object.entries(state.jobs || {})
-      .filter(([id]) => id !== 'guard')
-      .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
-    const diplomats = Object.values(state.diplomats || {})
-      .reduce((sum, n) => sum + (Number(n) || 0), 0);
-    const available = Math.max(0, state.pop - assigned - diplomats);
-    const productionJobs = assignable.filter(id => defs[id].res && Number(defs[id].base) > 0 &&
-      (!effectiveJobRate || effectiveJobRate(id) > 0) && needsWork(id));
-    const balancedJob = productionJobs.sort((a, b) => count(a) - count(b))[0];
-    const underMinimum = minimums.find(([id, minimumCount]) =>
-      minimumCount > 0 && assignable.includes(id) && count(id) < minimum(id));
-    const target = underMinimum?.[0] || targetForNeed || balancedJob;
-    const reclaimable = Object.keys(state.jobs || {}).filter(id => {
-      const zeroed = effectiveJobRate && defs[id]?.res && Number(defs[id].base) > 0 && effectiveJobRate(id) <= 0;
-      return id !== 'guard' && id !== target && count(id) > minimum(id) && (zeroed || !needsWork(id));
-    });
-    if (reclaimable.length) {
-      for (const donor of reclaimable) {
-        const amount = Math.max(0, count(donor) - minimum(donor));
-        if (api().actions?.setJob) invoke('setJob', donor, minimum(donor));
-        else for (let i = 0; i < amount; i++) invoke('assign', donor, -1);
-      }
-      return;
+    const available = availableWorkers(state);
+    const perWorker = id => Math.max(0, Number(effectiveJobRate?.(id) || defs[id]?.base || 0));
+    const neededWorkers = (id, resource, target) => {
+      const rate = perWorker(id);
+      if (!rate) return 0;
+      const deficit = Math.max(0, target - stock(resource));
+      const shortage = Math.max(0, -(rates[resource] || 0));
+      return Math.max(deficit ? Math.ceil(deficit / rate) : 0,
+        shortage ? Math.ceil(shortage / rate) : 0);
+    };
+    const planned = new Map();
+    for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
+      if (!assignable.includes(id)) continue;
+      const amount = neededWorkers(id, resource, target);
+      if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
     }
-    if (available > 0) {
-      if (target) {
-        const assignments = need ? available : 1;
-        if (api().actions?.setJob) invoke('setJob', target, count(target) + assignments);
-        else for (let i = 0; i < assignments; i++) invoke('assign', target, 1);
+    for (const [id, minimumCount] of minimums) {
+      if (minimumCount > 0 && assignable.includes(id) && count(id) < minimum(id)) {
+        planned.set(id, Math.max(planned.get(id) || 0, minimum(id) - count(id)));
       }
-      return;
     }
 
-    // Reallocate one worker when a target is unmet, or release surplus workers
-    // when all stores have enough coverage. Never take a minimum job below its
-    // floor, and prefer removing the largest surplus first.
     const donors = Object.keys(state.jobs || {})
-      .filter(id => id !== 'guard' && id !== target && count(id) > minimum(id))
-      .sort((a, b) => {
-        const aZeroed = effectiveJobRate && defs[a]?.res && Number(defs[a].base) > 0 && effectiveJobRate(a) <= 0;
-        const bZeroed = effectiveJobRate && defs[b]?.res && Number(defs[b].base) > 0 && effectiveJobRate(b) <= 0;
-        const surplus = id => {
-          const resource = defs[id]?.res;
-          return resource ? Math.max(0, (state.res[resource] || 0) - (demand[resource] || 0)) - reserve(resource) : 0;
-        };
-        const aDemanded = defs[a]?.res && (demand[defs[a].res] || 0) > 0;
-        const bDemanded = defs[b]?.res && (demand[defs[b].res] || 0) > 0;
-        return Number(bZeroed) - Number(aZeroed) || Number(aDemanded) - Number(bDemanded) ||
-          surplus(b) - surplus(a) || (count(b) - minimum(b)) - (count(a) - minimum(a));
-      });
-    const donor = donors[0];
-    if (donor && target) {
-      invoke('assign', donor, -1);
-      invoke('assign', target, 1);
+      .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' && !planned.has(id) && count(id) > minimum(id))
+      .sort((a, b) => count(b) - minimum(b) - (count(a) - minimum(a)));
+    const releases = new Map();
+    let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);
+    for (const donor of donors) {
+      if (needed <= 0) break;
+      const release = Math.min(needed, count(donor) - minimum(donor));
+      if (release) releases.set(donor, release);
+      needed -= release;
+    }
+
+    let free = available + [...releases.values()].reduce((sum, amount) => sum + amount, 0);
+    const additions = new Map();
+    for (const [id, amount] of planned) {
+      const add = Math.min(amount, free);
+      if (add) additions.set(id, add);
+      free -= add;
+    }
+
+    for (const [id, amount] of releases) {
+      const targetCount = count(id) - amount;
+      if (api().actions?.setJob && invoke('setJob', id, targetCount)) continue;
+      for (let i = 0; i < amount; i++) invoke('assign', id, -1);
+    }
+    for (const [id, amount] of additions) assignWorkers(id, amount, state);
+    if (!planned.size) {
+      const donor = donors[0];
+      if (donor) {
+        const targetCount = count(donor) - 1;
+        if (api().actions?.setJob && invoke('setJob', donor, targetCount)) return;
+        invoke('assign', donor, -1);
+      }
     }
   }
 
   function autoResearch(state, demand) {
     const defs = definitions().TECHS || [];
     for (const id of RESEARCH_ORDER) {
+      if (state.queues?.research?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (def && !state.techs[id] && unlocked(def, state) &&
           affordable({ knowledge: def.cost }, state, demand)) {
-        invoke('research', id);
-        return;
+        if (invoke('research', id)) return;
       }
     }
   }
@@ -288,6 +341,7 @@
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
     for (const id of BUILD_ORDER) {
+      if (state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
       const canBuild = api().helpers?.canBuild;
@@ -295,10 +349,9 @@
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = typeof api().helpers?.buildingCost === 'function'
         ? api().helpers.buildingCost(def) : def.cost;
-      if (craftMissingFor(cost, state, demand)) return;
+      if (settings.crafting && craftMissingFor(cost, state, demand)) return;
       if (affordable(cost, state, demand)) {
-        invoke('build', id);
-        return;
+        if (invoke('build', id)) return;
       }
     }
   }
@@ -307,25 +360,29 @@
     const defs = definitions().CRAFTS || [];
     for (const [resource, amount] of Object.entries(cost || {})) {
       if (Math.max(0, (state.res[resource] || 0) - (demand[resource] || 0)) >= amount) continue;
-      const recipe = defs.find(def => def.give?.[resource] && unlocked(def, state));
+      const recipe = defs.find(def => def.give?.[resource] && craftable(def, state));
       if (!recipe || seen.has(recipe.id)) continue;
       const nextSeen = new Set(seen).add(recipe.id);
       const missingInput = Object.entries(recipe.cost || {})
         .find(([input, inputAmount]) => Math.max(0, (state.res[input] || 0) - (demand[input] || 0)) < inputAmount);
       if (missingInput && craftMissingFor({ [missingInput[0]]: missingInput[1] }, state, demand, nextSeen)) return true;
       if (!missingInput && affordable(recipe.cost, state, demand)) {
-        return invoke('craft', recipe.id);
+        if (invoke('craft', recipe.id)) return true;
       }
     }
     return false;
   }
 
   function autoCraft(state, demand) {
-    // Crafting is demand-driven: autoBuildings handles the next build's
-    // craftable dependencies. This fallback keeps manually selected recipes
-    // moving once their inputs are available without stockpiling everything.
+    // Supply queued projects before stocking a single batch of each recipe.
+    // Their desired outputs are already included in demand; do not subtract
+    // them again when checking whether the queued output is covered.
+    for (const [resource, amount] of Object.entries(demand)) {
+      const inputDemand = { ...demand, [resource]: 0 };
+      if (craftMissingFor({ [resource]: amount }, state, inputDemand)) return;
+    }
     const defs = definitions().CRAFTS || [];
-    const target = defs.find(def => unlocked(def, state) && affordable(def.cost, state, demand) &&
+    const target = defs.find(def => craftable(def, state) && affordable(def.cost, state, demand) &&
       Object.entries(def.give || {}).some(([id, amount]) =>
         (state.res[id] || 0) < amount));
     if (target) invoke('craft', target.id);
@@ -346,10 +403,11 @@
     const defs = definitions().EXPEDITIONS || [];
     for (const def of defs) {
       const queued = (state.queues?.expedition || []).some(entry => entry.id === def.id);
+      const cost = api().helpers?.expeditionCost?.(def) || def.cost;
       if (!state.expeditions[def.id] && !queued && (!def.landing || def.landing === state.landing) &&
-          state.pop >= def.reqPop && affordable(def.cost, state, demand)) {
-        invoke('expedition', def.id);
-        return;
+          state.pop >= def.reqPop) {
+        if (settings.crafting && craftMissingFor(cost, state, demand)) return;
+        if (affordable(cost, state, demand) && invoke('expedition', def.id)) return;
       }
     }
   }
@@ -358,20 +416,17 @@
     if (busy || !settings.enabled || !api()?.getState) return;
     busy = true;
     try {
-      const state = snapshot();
-      if (!state) return;
+      if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
-      const demand = queuedDemand();
-      if (settings.jobs && autoMorale(state)) return;
-      if (settings.jobs) autoJobs(state, demand);
-      if (settings.research) autoResearch(state, demand);
-      if (settings.buildings) autoBuildings(state, demand);
-      if (settings.crafting) autoCraft(state, demand);
-      if (settings.diplomacy) autoDiplomacy(state, demand);
-      if (settings.expeditions) autoExpeditions(state, demand);
-      // Trials and migration are deliberately opt-in and strategy-specific.
+      for (const [setting, step] of [
+        ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
+        ['buildings', autoBuildings], ['crafting', autoCraft],
+        ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
+      ]) {
+        if (settings[setting]) step(snapshot(), queuedDemand());
+      }
       if (lastAction === 'Scanning Emberhold') lastAction = 'No eligible action';
-      updatePanel(state);
+      updatePanel(snapshot());
     } catch (error) {
       lastAction = `Automation error: ${error?.message || error}`;
       console.error('[Emberhold Automation]', lastAction, error);
@@ -391,7 +446,7 @@
       <div class="ea-grid">${[
         ['jobs', 'Jobs'], ['research', 'Research'], ['buildings', 'Buildings'],
         ['crafting', 'Crafting'], ['diplomacy', 'Diplomacy'],
-        ['expeditions', 'Expeditions'], ['trials', 'Trials'], ['migration', 'Migration'],
+        ['expeditions', 'Expeditions'],
       ].map(([id, label]) => `<label><input data-setting="${id}" type="checkbox"> ${label}</label>`).join('')}</div>
       <label>Loop delay <select data-setting="interval"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option><option value="5000">5s</option></select></label>
       <div class="ea-status" data-status>Waiting for Emberhold</div></div>`;
@@ -423,10 +478,10 @@
   }
 
   function boot() {
-    if (!api()) return setTimeout(boot, 250);
+    if (typeof api()?.getState !== 'function') return setTimeout(boot, 250);
     lastAction = api().actions ? 'Connected to Emberhold' : api().action ? 'Connected (legacy API)' : 'State API only — actions unavailable';
     makePanel();
-    api().subscribe(updatePanel);
+    if (typeof api().subscribe === 'function') api().subscribe(updatePanel);
     restart();
     automationStep();
   }
