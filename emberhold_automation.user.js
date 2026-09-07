@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.26.8
+// @version      1.27.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -172,23 +172,25 @@
       (state.res[id] || 0) < capacityOf(id));
   }
 
-  // The order is intentionally explicit: it is easy to adjust for a different
-  // strategy without changing the controller or Emberhold itself.
+  // Preferred order, not an allowlist: new definitions remain eligible.
+  function orderedIds(preferred, ids) {
+    return [...new Set([...preferred.filter(id => ids.includes(id)), ...ids])];
+  }
   const RESEARCH_ORDER = [
     'stoneWorking', 'writing', 'craftsmanship', 'masonry', 'copperProspecting',
     'currency', 'guards', 'leatherArmor', 'deepMining', 'seamMining',
     'metallurgy', 'weaponry', 'banking', 'diplomacy', 'civics', 'council',
     'machineryTech', 'hydraulics', 'weaponEfficiency', 'electricalEngineering',
-    'astronomy', 'optics', 'aphrodisiac', 'hospital',
+    'advancedScience', 'astronomy', 'optics', 'aphrodisiac', 'hospital',
   ];
   const BUILD_ORDER = [
     'hut', 'storehouse', 'foragerLodge', 'lumberYard', 'quarry', 'stoneWorks',
     'workbench', 'library', 'monument', 'barracks', 'trainingYard', 'hospital', 'deepMine', 'deepStore',
     'coalSeam', 'forge', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
-    'steamPlant', 'dynamo', 'vault', 'factory', 'observatory', 'beacon',
+    'steamPlant', 'dynamo', 'vault', 'factory', 'instrumentHall', 'observatory', 'beacon',
   ];
   const JOB_ORDER = [
-    'forager', 'woodcutter', 'miner', 'thinker', 'tinkerer', 'digger',
+    'forager', 'woodcutter', 'miner', 'thinker', 'experimentalist', 'tinkerer', 'digger',
     'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
   ];
 
@@ -211,7 +213,10 @@
   function autoJobs(state, demand) {
     const defs = definitions().JOBS || {};
     const effectiveJobRate = api().helpers?.jobProduction;
-    const assignable = JOB_ORDER.filter(id => defs[id] && id !== 'guard' && jobUnlocked(defs[id]) &&
+    const jobOrder = orderedIds(JOB_ORDER, Object.keys(defs));
+    const knowledgeWorker = id => defs[id]?.res === 'knowledge';
+    const assignable = jobOrder.filter(id => id !== 'guard' && !defs[id].targeted &&
+      defs[id].res && Number(defs[id].base) > 0 && jobUnlocked(defs[id]) &&
       (!effectiveJobRate || effectiveJobRate(id) > 0));
 
     const count = id => Number(state.jobs?.[id] || 0);
@@ -325,8 +330,14 @@
     const jobLimit = id => {
       const reported = typeof jobCapacity === 'function' ? Number(jobCapacity(id)) : NaN;
       if (Number.isFinite(reported)) return reported;
-      if (Number.isFinite(Number(defs[id]?.max))) return Number(defs[id].max);
-      if (Number.isFinite(Number(defs[id]?.limit))) return Number(defs[id].limit);
+      for (const field of ['max', 'limit']) {
+        const value = defs[id]?.[field];
+        if (value == null) continue;
+        try {
+          const limit = Number(typeof value === 'function' ? value() : value);
+          if (Number.isFinite(limit)) return Math.max(0, Math.floor(limit));
+        } catch (_) { /* An unavailable legacy limit must not stop other jobs. */ }
+      }
       return NaN;
     };
     const neededWorkers = (id, resource, target) => {
@@ -354,7 +365,7 @@
     }
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
-      if (foodEmergency && id === 'thinker') continue;
+      if (foodEmergency && knowledgeWorker(id)) continue;
       const amount = plannedAmount(id, neededWorkers(id, resource, target));
       if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
     }
@@ -367,7 +378,7 @@
 
     const donors = Object.keys(state.jobs || {})
       .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' &&
-        (id !== 'thinker' || foodEmergency) && count(id) > donorMinimum(id))
+        (!knowledgeWorker(id) || foodEmergency) && count(id) > donorMinimum(id))
       .sort((a, b) => count(b) - donorMinimum(b) - (count(a) - donorMinimum(a)));
     const releases = new Map();
     let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);
@@ -400,7 +411,7 @@
           return needsWork(id) && (!Number.isFinite(limit) || jobCount(id) < limit);
         })
         .sort((a, b) => Number(needsWork(b)) - Number(needsWork(a)) ||
-          JOB_ORDER.indexOf(a) - JOB_ORDER.indexOf(b))[0];
+          jobOrder.indexOf(a) - jobOrder.indexOf(b))[0];
       if (fallback) {
         const limit = jobLimit(fallback);
         const room = Number.isFinite(limit) ? Math.max(0, limit - jobCount(fallback)) : remainingWorkers;
@@ -419,7 +430,7 @@
 
   function autoResearch(state, demand) {
     const defs = definitions().TECHS || [];
-    for (const id of RESEARCH_ORDER) {
+    for (const id of orderedIds(RESEARCH_ORDER, defs.map(def => def.id))) {
       if (state.queues?.research?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (def && !state.techs[id] && unlocked(def, state) &&
@@ -431,7 +442,7 @@
 
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
-    for (const id of BUILD_ORDER) {
+    for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
       if (state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;

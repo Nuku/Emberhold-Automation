@@ -8,6 +8,8 @@ The automation handles jobs, research, buildings, crafting dependencies, diploma
 
 The script uses the page's synchronous `window.emberhold` API. It refreshes state between automation stages, uses current expedition costs, and preserves targeted performers/explorers during ordinary job reassignment. Diplomat pause/resume requires both Jobs and Diplomacy enabled. Event subscriptions are optional.
 
+Priority lists are preferences rather than allowlists: new research, buildings, and ordinary resource-producing jobs are discovered from the game definitions, subject to unlocks and capacity limits. Advanced Science, Instrument Halls, and Experimentalists have explicit priorities. Knowledge workers are preserved during ordinary reassignment and can donate workers in food emergencies. New targeted or non-producing jobs still require dedicated handling; automatic discovery assumes the existing game API and definition schema.
+
 Run the regression checks with `node --test tests/automation.test.cjs`.
 
 Food deficits are handled before queued-project staffing: miners can donate workers even when a queued project still demands Stone. Other jobs with a population-limited capacity are filled before queue-specific staffing. The planner uses the game's net production rate directly.

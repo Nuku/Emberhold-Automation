@@ -439,6 +439,60 @@ test('morale assignments do not skip research for the tick', () => {
   assert.equal(h.state.techs.writing, true);
 });
 
+test('new research and buildings are discovered and obey unlocks and queues', () => {
+  const h = harness();
+  h.state.res = { knowledge: 500, wood: 100 };
+  h.api.definitions.TECHS = [
+    { id: 'futureScience', cost: 10, req: () => false },
+    { id: 'advancedScience', cost: 50 },
+    { id: 'futureTheory', cost: 20 },
+  ];
+  h.api.definitions.BUILDINGS = [
+    { id: 'instrumentHall', cost: { wood: 10 }, req: () => !!h.state.techs.advancedScience },
+    { id: 'futureLab', cost: { wood: 10 } },
+  ];
+  h.action('research', id => { h.state.techs[id] = true; });
+  h.action('build', id => { h.state.queues.build = [{ id }]; });
+  h.autoBuildings(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['build', 'futureLab']]);
+  h.autoResearch(h.api.getState(), {});
+  h.autoBuildings(h.api.getState(), {});
+  h.autoResearch(h.api.getState(), {});
+  assert.deepEqual(h.calls.slice(1), [
+    ['research', 'advancedScience'], ['build', 'instrumentHall'], ['research', 'futureTheory'],
+  ]);
+});
+
+test('new knowledge jobs fill dynamic caps and remain staffed until food emergencies', () => {
+  for (const id of ['experimentalist', 'futureScholar']) {
+    const h = harness();
+    h.state.pop = 6;
+    h.state.jobs = { forager: 2 };
+    h.state.res = { food: 100, knowledge: 100 };
+    h.api.definitions.JOBS = {
+      forager: { res: 'food', base: 1 },
+      [id]: { res: 'knowledge', base: 0.6, max: () => 2 },
+      futureTarget: { res: 'knowledge', base: 1, targeted: true },
+      futureLocked: { res: 'knowledge', base: 1, unlock: () => false },
+      futureSupport: { base: 0 },
+    };
+    h.api.helpers.jobProduction = job => h.api.definitions.JOBS[job].base;
+    h.api.helpers.production = () => ({ food: h.state.jobs.forager - 2, knowledge: (h.state.jobs[id] || 0) * 0.6 });
+    h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+    h.autoJobs(h.api.getState(), {});
+    assert.equal(h.state.jobs[id], 2);
+    h.autoJobs(h.api.getState(), {});
+    assert.equal(h.state.jobs[id], 2);
+    assert.ok(h.calls.every(call => ['forager', id].includes(call[1])));
+    h.state.pop = 4;
+    h.state.res.food = 0;
+    h.api.helpers.production = () => ({ food: -1, knowledge: 1.2 });
+    h.autoJobs(h.api.getState(), {});
+    assert.equal(h.state.jobs[id], 0);
+    assert.equal(h.state.jobs.forager, 4);
+  }
+});
+
 test('boot works without an event subscription API', () => {
   const h = harness();
   h.context.document.getElementById = () => ({});
