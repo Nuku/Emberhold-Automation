@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.29.2
+// @version      1.29.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -224,6 +224,63 @@
     'forager', 'woodcutter', 'miner', 'thinker', 'experimentalist', 'tinkerer', 'digger',
     'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
   ];
+  // Current game builds export FACTORY_RECIPES. Keep the current public
+  // recipes as a compatibility fallback for older builds.
+  const FACTORY_RECIPES = [
+    { id: 'goods', inputs: {} },
+    { id: 'tools', inputs: { wood: 3.2 }, tech: 'craftsmanship' },
+    { id: 'steel', inputs: { iron: 0.6, coal: 0.4 }, tech: 'metallurgy' },
+    { id: 'machinery', inputs: { steel: 0.1, coal: 0.4 }, tech: 'machineryTech' },
+  ];
+  const FACTORY_TRIAL_GOALS = { industrialization: { resource: 'goods', amount: 100 },
+    silence: { resource: 'steel', amount: 100 } };
+
+  function factoryRecipes() {
+    const exposed = definitions().FACTORY_RECIPES;
+    return Array.isArray(exposed) && exposed.length ? exposed : FACTORY_RECIPES;
+  }
+
+  function currentFactoryRecipe(state) {
+    const current = state.factoryRecipe || api().helpers?.factoryRecipe?.()?.id;
+    return factoryRecipes().find(recipe => recipe.id === current) || factoryRecipes()[0];
+  }
+
+  function factoryRecipeUnlocked(recipe, state) {
+    return !!recipe && (!recipe.tech || state.techs?.[recipe.tech]);
+  }
+
+  function autoFactory(state, demand) {
+    if (!(state.bld?.factory > 0) ||
+        !(api().actions?.chooseFactoryRecipe || api().action)) return;
+    const recipes = factoryRecipes().filter(recipe => factoryRecipeUnlocked(recipe, state));
+    const byOutput = new Map(recipes.map(recipe => [recipe.id, recipe]));
+    const stock = resource => Math.max(0, Number(state.res?.[resource] || 0));
+    const goals = recipes.filter(recipe => (demand[recipe.id] || 0) > stock(recipe.id));
+    const trialGoal = FACTORY_TRIAL_GOALS[state.trial?.id];
+    if (trialGoal && stock(trialGoal.resource) < trialGoal.amount) {
+      const recipe = byOutput.get(trialGoal.resource);
+      if (recipe && !goals.includes(recipe)) goals.push(recipe);
+    }
+    if (!goals.length) return;
+
+    // A Factory has one shared line. When the requested output consumes a
+    // factory-made component (Machinery -> Steel), make a small input buffer
+    // first so switching to the final line produces immediately.
+    const factoryCount = Math.max(1, Number(state.bld.factory || 0));
+    const inputRecipe = (recipe, seen = new Set()) => {
+      if (seen.has(recipe.id)) return null;
+      const nextSeen = new Set(seen).add(recipe.id);
+      for (const [input, rate] of Object.entries(recipe.inputs || {})) {
+        const producer = byOutput.get(input);
+        if (!producer) continue;
+        const buffer = Math.max(Number(rate) || 0, (Number(rate) || 0) * factoryCount * 10);
+        if (stock(input) < buffer) return inputRecipe(producer, nextSeen) || producer;
+      }
+      return null;
+    };
+    const target = inputRecipe(goals[0]) || goals[0];
+    if (currentFactoryRecipe(state)?.id !== target.id) invoke('chooseFactoryRecipe', target.id);
+  }
 
   function autoMorale(state) {
     const defs = definitions().JOBS || {};
@@ -552,8 +609,9 @@
       const resource = site.resource;
       if (site.id === 'livingBlock') return 4;
       // Queue reservations are the next priority after residential capacity.
-      // Factories produce goods, while dig sites produce their reported resource.
-      const output = site.id === 'factory' ? 'goods' : resource;
+      // Factories produce their selected recipe, while dig sites produce their
+      // reported resource.
+      const output = site.id === 'factory' ? currentFactoryRecipe(state)?.id || 'goods' : resource;
       if ((demand[output] || 0) > 0) return 3;
       if (site.id === 'factory') return 1;
       const stock = state.res[resource] || 0;
@@ -677,7 +735,7 @@
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
       for (const [setting, step] of [
-        ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
+        ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
       ]) {

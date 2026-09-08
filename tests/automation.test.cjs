@@ -13,7 +13,7 @@ function harness() {
   const context = vm.createContext({ window: { emberhold: api }, console,
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
-    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoPower,
+    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower,
       autoCraft, autoResearch, autoExpeditions, automationStep, queuedDemand,
       availableWorkers, boot };
   `), context);
@@ -68,6 +68,28 @@ test('power reserves factory capacity and sheds before enabling priority sites',
   assert.ok(h.api.getPower().generated - h.api.getPower().used >= 1.5);
   h.autoPower(h.api.getState(), {});
   assert.equal(h.calls.length, 2, 'stable allocation must not issue repeated setters');
+});
+
+test('factories retask to produce queued outputs and their factory-made inputs', () => {
+  const h = harness();
+  h.state.bld.factory = 1;
+  h.state.techs = { craftsmanship: true, metallurgy: true, machineryTech: true };
+  h.state.factoryRecipe = 'goods';
+  h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
+
+  h.autoFactory(h.api.getState(), { tools: 1 });
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'tools']]);
+
+  h.calls.length = 0;
+  h.state.factoryRecipe = 'goods';
+  h.autoFactory(h.api.getState(), { machinery: 1 });
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'steel']],
+    'Machinery must first stock the Steel its factory line consumes');
+
+  h.calls.length = 0;
+  h.state.res.steel = 1;
+  h.autoFactory(h.api.getState(), { machinery: 1 });
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']]);
 });
 
 test('housing and a factory shortfall switch off optional loads', () => {
