@@ -167,6 +167,26 @@ test('strict queue order reserves only the first item in each queue', () => {
   assert.deepEqual(h.queuedDemand(h.state), { wood: 10, knowledge: 3, food: 4 });
 });
 
+test('research queue demand includes every research resource', () => {
+  const h = harness();
+  h.state.settings = { strictQueueOrder: true };
+  h.state.queues.research = [{ id: 'engineering' }];
+  h.api.definitions.TECHS = [{ id: 'engineering', cost: { knowledge: 3, wood: 7, tools: 1 } }];
+  assert.deepEqual(h.queuedDemand(h.state), { knowledge: 3, wood: 7, tools: 1 });
+});
+
+test('research waits for non-knowledge resources', () => {
+  const h = harness();
+  h.state.res = { knowledge: 10, wood: 0 };
+  h.api.definitions.TECHS = [{ id: 'engineering', cost: { knowledge: 10, wood: 5 } }];
+  h.action('research', id => { h.state.techs[id] = true; });
+  h.autoResearch(h.api.getState(), {});
+  assert.deepEqual(h.calls, []);
+  h.state.res.wood = 5;
+  h.autoResearch(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['research', 'engineering']]);
+});
+
 test('building dependencies obey the Crafting toggle', () => {
   const h = harness();
   h.settings.crafting = false;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.29.1
+// @version      1.29.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -86,6 +86,11 @@
       Math.max(0, (state.res[id] || 0) - (demand[id] || 0)) >= amount);
   }
 
+  function researchCost(def) {
+    const cost = api().helpers?.researchCost?.(def) ?? def?.cost;
+    return typeof cost === 'number' ? { knowledge: cost } : (cost || {});
+  }
+
   function queuedDemand(state = snapshot()) {
     if (!state?.settings?.strictQueueOrder) return api().helpers?.queueDemand?.() || {};
 
@@ -106,7 +111,7 @@
       const cost = type === 'build'
         ? (api().helpers?.buildingCost?.(def) || def.cost)
         : type === 'research'
-          ? { knowledge: def.cost }
+          ? researchCost(def)
           : (api().helpers?.expeditionCost?.(def) || def.cost);
       for (const [resource, amount] of Object.entries(cost || {})) {
         demand[resource] = (demand[resource] || 0) + amount;
@@ -517,7 +522,7 @@
       if (state.queues?.research?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (def && !state.techs[id] && unlocked(def, state) &&
-          affordable({ knowledge: def.cost }, state, demand)) {
+          affordable(researchCost(def), state, demand)) {
         if (invoke('research', id)) return;
       }
     }
