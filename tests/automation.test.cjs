@@ -253,6 +253,9 @@ test('wonder start waits for the beacon revisit and preserves queued demand', ()
   const h = harness();
   h.settings.wonderStart = true;
   h.state.landing = 'emberplain';
+  h.state.bld = { barracks: 1 };
+  h.state.jobs = { guard: 2 };
+  h.state.guardInjuries = 0;
   h.state.techs = { optics: true };
   h.state.beaconsLit = { emberplain: true };
   h.state.beaconRevisited = { emberplain: true };
@@ -265,11 +268,32 @@ test('wonder start waits for the beacon revisit and preserves queued demand', ()
   assert.deepEqual(h.calls, [['findWonder']]);
 });
 
+test('wonder automation waits for a full healthy Guard force', () => {
+  const h = harness();
+  h.settings.wonderStart = true;
+  h.state.landing = 'emberplain';
+  h.state.bld = { barracks: 1 };
+  h.state.jobs = { guard: 0 };
+  h.state.guardInjuries = 1;
+  h.state.techs = { optics: true };
+  h.state.beaconsLit = { emberplain: true };
+  h.state.beaconRevisited = { emberplain: true };
+  h.state.surveyPoints = 100;
+  h.state.res = { wood: 100 };
+  h.state.wonders = { emberplain: { found: false, outcomes: {} } };
+  h.api.definitions.WONDERS = [{ id: 'emberplain', findCost: { survey: 10, wood: 5 } }];
+  h.action('findWonder', () => { h.state.wonders.emberplain.found = true; });
+  h.autoWonderStart(h.api.getState(), {});
+  assert.deepEqual(h.calls, []);
+});
+
 test('wonder handling fills available Rapture capacity but leaves the fate manual', () => {
   const h = harness();
   h.settings.wonderHandle = true;
   h.state.pop = 5;
   h.state.jobs = { forager: 1, guard: 2 };
+  h.state.bld = { barracks: 1 };
+  h.state.guardInjuries = 0;
   h.state.landing = 'emberplain';
   h.state.wonders = { emberplain: { found: true, sections: [false, false, false, false, false],
     progress: 0, researches: {}, expeditions: {} } };

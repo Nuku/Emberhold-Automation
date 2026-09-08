@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.1
+// @version      1.30.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -782,13 +782,26 @@
         .filter(([id]) => id !== 'survey')), state, demand);
   }
 
+  function wonderGuardCapacity(state) {
+    const reported = api().helpers?.jobCapacity?.('guard');
+    if (Number.isFinite(Number(reported))) return Math.max(0, Math.floor(Number(reported)));
+    return Math.max(0, Math.floor(Number(state.bld?.barracks || 0)) * 2);
+  }
+
+  function wonderGuardsReady(state) {
+    const capacity = wonderGuardCapacity(state);
+    const guards = Math.max(0, Math.floor(Number(state.jobs?.guard || 0)));
+    const injuries = Math.max(0, Math.floor(Number(state.guardInjuries || 0)));
+    return capacity > 0 && guards >= capacity && injuries === 0;
+  }
+
   function autoWonderStart(state, demand) {
     if (!settings.wonderStart || !(api().actions?.findWonder || api().action)) return;
     const def = (definitions().WONDERS || []).find(item => item.id === state.landing);
     const record = state.wonders?.[state.landing];
     if (!def || record?.found || (record?.outcomes && Object.keys(record.outcomes).length >= 3) ||
         !state.techs?.optics || !state.beaconsLit?.[state.landing] ||
-        !state.beaconRevisited?.[state.landing]) return;
+        !state.beaconRevisited?.[state.landing] || !wonderGuardsReady(state)) return;
     const cost = wonderFindCost(def, state);
     if (affordableWonderFind(cost, state, demand)) invoke('findWonder');
   }
@@ -816,6 +829,9 @@
 
     const capacity = Math.max(0, Math.floor(Number(state.jobs?.guard || 0)) * 2);
     const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
+    // A zero-worker Wonder assignment is a new attempt. Wait for the full,
+    // healthy Guard force rather than feeding villagers into an uncovered run.
+    if (workers === 0 && !wonderGuardsReady(state)) return;
     const available = availableWorkers(state);
     if (workers < capacity && available > 0) {
       invoke('assignRapture', Math.min(capacity - workers, available));
