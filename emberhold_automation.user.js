@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.28.1
+// @version      1.28.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -304,6 +304,17 @@
       if (resource === 'currency') return stock('currency') < currencyTarget || (rates.currency || 0) < 0;
       return stock(resource) < reserve(resource) || (demand[resource] || 0) > 0 || (rates[resource] || 0) < 0;
     };
+    // Coal consumption can be input-limited by Iron (Forges) or by the
+    // current fuel state (Steam Plants). That makes the one-second net rate
+    // alternate between positive and negative while the coal store is low.
+    // Protect existing Coal Diggers below a high-water mark and let the
+    // normal capacity planning refill any missing diggers.
+    const coalIndustry = Number(state.bld?.forge || 0) > 0 ||
+      Number(state.bld?.steamPlant || 0) > 0;
+    const coalHighWater = typeof capacityOf === 'function'
+      ? Math.ceil(capacityOf('coal') * 0.75) : Infinity;
+    const coalReserveActive = id => id === 'digger' && coalIndustry &&
+      Number(state.res?.coal || 0) < coalHighWater;
     // Keep the workers whose output offsets consumption. A positive net rate
     // with the current workforce does not mean the whole workforce is surplus.
     const sustainingMinimum = id => {
@@ -315,7 +326,8 @@
       return Math.max(0, Math.min(count(id),
         Math.ceil(count(id) - rates[resource] / perWorker - 1e-9)));
     };
-    const minimum = id => Math.max(sustainingMinimum(id), id === 'forager' ? 1 :
+    const minimum = id => Math.max(sustainingMinimum(id), coalReserveActive(id) ? count(id) :
+      id === 'forager' ? 1 :
       (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
         ? 0 : minimums.find(item => item[0] === id)?.[1] || 0));
     const needs = [

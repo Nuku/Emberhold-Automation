@@ -177,6 +177,27 @@ test('automatic guards do not consume population slots', () => {
   assert.equal(h.availableWorkers(h.state), 2);
 });
 
+test('low coal stock protects coal diggers from input-limited industry oscillation', () => {
+  const h = harness();
+  h.state.pop = 10;
+  h.state.res.coal = 20;
+  h.state.jobs = { forager: 1, digger: 5 };
+  h.state.bld = { forge: 2 };
+  h.api.helpers.capacityOf = id => id === 'coal' ? 100 : 1000;
+  h.api.helpers.production = () => ({ food: 1, coal: 1 });
+  h.api.helpers.jobProduction = id => id === 'digger' ? 0.1 : 1;
+  h.api.helpers.jobCapacity = id => id === 'digger' ? 5 : NaN;
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    digger: { res: 'coal', base: 0.1, max: () => 5 },
+  };
+  h.action('assign', () => {});
+  h.action('setJob', () => {});
+  h.autoJobs(h.api.getState(), {});
+  assert.equal(h.calls.some(([name, id, amount]) =>
+    id === 'digger' && amount < 0), false);
+});
+
 test('zero-production diplomats pause and resume through the legacy API', () => {
   const h = harness();
   h.api.definitions.JOBS = { diplomat: { targeted: true, base: 0, res: 'currency' } };
