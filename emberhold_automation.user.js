@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.29.5
+// @version      1.30.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -25,6 +25,8 @@
     crafting: true,
     diplomacy: true,
     expeditions: true,
+    wonderStart: false,
+    wonderHandle: false,
     interval: 1000,
   };
 
@@ -107,12 +109,11 @@
       const entry = state.queues?.[type]?.[0];
       if (!entry) continue;
       const def = definitionsByType[type].find(item => item.id === entry.id);
-      if (!def) continue;
       const cost = type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry.cost
         : type === 'research'
-          ? researchCost(def)
-          : (api().helpers?.expeditionCost?.(def) || def.cost);
+          ? (def ? researchCost(def) : entry.cost)
+          : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost;
       for (const [resource, amount] of Object.entries(cost || {})) {
         demand[resource] = (demand[resource] || 0) + amount;
       }
@@ -471,7 +472,8 @@
     // calculated sustaining floor for another production job while villagers
     // are starving; food must be able to reclaim those workers first.
     const foodEmergency = stock('food') <= 0 || foodRate < 0;
-    const donorMinimum = id => foodEmergency && id !== 'forager' ? 0 : minimum(id);
+    const donorMinimum = id => coalReserveActive(id) ? minimum(id) :
+      (foodEmergency && id !== 'forager' ? 0 : minimum(id));
     // Limited jobs get first claim on non-emergency population. This keeps
     // jobs such as miners and thinkers full even when a queue is requesting a
     // different resource. Food emergencies deliberately skip this fill so the
@@ -764,6 +766,62 @@
     }
   }
 
+  function wonderFindCost(def, state) {
+    const helper = api().helpers?.wonderFindCost;
+    if (typeof helper === 'function') return helper(def);
+    const beacons = Object.values(state.beaconsLit || {}).filter(Boolean).length;
+    const multiplier = Math.max(1.05, 1.80 - 0.15 * Math.max(0, beacons - 1));
+    return Object.fromEntries(Object.entries(def?.findCost || {})
+      .map(([id, amount]) => [id, Math.ceil(amount * multiplier)]));
+  }
+
+  function affordableWonderFind(cost, state, demand) {
+    const survey = Number(cost?.survey || 0);
+    return Number(state.surveyPoints || 0) >= survey &&
+      affordable(Object.fromEntries(Object.entries(cost || {})
+        .filter(([id]) => id !== 'survey')), state, demand);
+  }
+
+  function autoWonderStart(state, demand) {
+    if (!settings.wonderStart || !(api().actions?.findWonder || api().action)) return;
+    const def = (definitions().WONDERS || []).find(item => item.id === state.landing);
+    const record = state.wonders?.[state.landing];
+    if (!def || record?.found || (record?.outcomes && Object.keys(record.outcomes).length >= 3) ||
+        !state.techs?.optics || !state.beaconsLit?.[state.landing] ||
+        !state.beaconRevisited?.[state.landing]) return;
+    const cost = wonderFindCost(def, state);
+    if (affordableWonderFind(cost, state, demand)) invoke('findWonder');
+  }
+
+  function autoWonderHandle(state) {
+    if (!settings.wonderHandle) return;
+    const record = state.wonders?.[state.landing];
+    if (!record?.found) return;
+    const section = (record.sections || []).findIndex(done => !done);
+    if (section < 0) return; // The final fate is deliberately left manual.
+
+    // These actions are optional until the game exposes them through its
+    // public automation API. Rapture staffing is already available today.
+    if (api().actions?.wonderResearch) {
+      for (let index = 0; index <= section; index++) {
+        if (!record.researches?.[index] && invoke('wonderResearch', index)) return;
+      }
+    }
+    if (api().actions?.wonderExpedition) {
+      for (let index = 0; index <= section; index++) {
+        if (!record.expeditions?.[index] && invoke('wonderExpedition', index)) return;
+      }
+    }
+    if (api().actions?.wonderObstacle && invoke('wonderObstacle')) return;
+
+    const capacity = Math.max(0, Math.floor(Number(state.jobs?.guard || 0)) * 2);
+    const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
+    const available = availableWorkers(state);
+    if (workers < capacity && available > 0) {
+      invoke('assignRapture', Math.min(capacity - workers, available));
+    }
+  }
+
   function automationStep() {
     if (busy || !settings.enabled || !api()?.getState) return;
     busy = true;
@@ -774,6 +832,7 @@
         ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
+        ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
         if (settings[setting]) step(snapshot(), queuedDemand());
       }
@@ -799,6 +858,7 @@
         ['jobs', 'Jobs'], ['research', 'Research'], ['buildings', 'Buildings'],
         ['crafting', 'Crafting'], ['diplomacy', 'Diplomacy'],
         ['expeditions', 'Expeditions'], ['power', 'Power'],
+        ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
       ].map(([id, label]) => `<label><input data-setting="${id}" type="checkbox"> ${label}</label>`).join('')}</div>
       <label>Loop delay <select data-setting="interval"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option><option value="5000">5s</option></select></label>
       <div class="ea-status" data-status>Waiting for Emberhold</div></div>`;

@@ -14,7 +14,8 @@ function harness() {
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
     window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower,
-      autoCraft, autoResearch, autoExpeditions, automationStep, queuedDemand,
+      autoCraft, autoResearch, autoExpeditions, autoWonderStart, autoWonderHandle,
+      automationStep, queuedDemand,
       availableWorkers, boot };
   `), context);
   function action(name, fn) {
@@ -186,7 +187,8 @@ test('strict queue order reserves only the first item in each queue', () => {
   h.api.definitions.EXPEDITIONS = [
     { id: 'scout', cost: { food: 4 } }, { id: 'mine', cost: { food: 8 } },
   ];
-  assert.deepEqual(h.queuedDemand(h.state), { wood: 10, knowledge: 3, food: 4 });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.queuedDemand(h.state))),
+    { wood: 10, knowledge: 3, food: 4 });
 });
 
 test('research queue demand includes every research resource', () => {
@@ -194,7 +196,8 @@ test('research queue demand includes every research resource', () => {
   h.state.settings = { strictQueueOrder: true };
   h.state.queues.research = [{ id: 'engineering' }];
   h.api.definitions.TECHS = [{ id: 'engineering', cost: { knowledge: 3, wood: 7, tools: 1 } }];
-  assert.deepEqual(h.queuedDemand(h.state), { knowledge: 3, wood: 7, tools: 1 });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.queuedDemand(h.state))),
+    { knowledge: 3, wood: 7, tools: 1 });
 });
 
 test('research waits for non-knowledge resources', () => {
@@ -244,6 +247,61 @@ test('an idle villager starts exploring', () => {
   h.autoJobs(h.api.getState(), {});
   assert.equal(h.state.jobs.explorer, 1);
   assert.deepEqual(h.calls, [['assignExplorer', 1]]);
+});
+
+test('wonder start waits for the beacon revisit and preserves queued demand', () => {
+  const h = harness();
+  h.settings.wonderStart = true;
+  h.state.landing = 'emberplain';
+  h.state.techs = { optics: true };
+  h.state.beaconsLit = { emberplain: true };
+  h.state.beaconRevisited = { emberplain: true };
+  h.state.surveyPoints = 18;
+  h.state.res = { wood: 9 };
+  h.state.wonders = { emberplain: { found: false, outcomes: {} } };
+  h.api.definitions.WONDERS = [{ id: 'emberplain', findCost: { survey: 10, wood: 5 } }];
+  h.action('findWonder', () => { h.state.wonders.emberplain.found = true; });
+  h.autoWonderStart(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['findWonder']]);
+});
+
+test('wonder handling fills available Rapture capacity but leaves the fate manual', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1, guard: 2 };
+  h.state.landing = 'emberplain';
+  h.state.wonders = { emberplain: { found: true, sections: [false, false, false, false, false],
+    progress: 0, researches: {}, expeditions: {} } };
+  h.action('assignRapture', delta => {
+    h.state.rapture = { landing: 'emberplain', workers: delta };
+  });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['assignRapture', 4]]);
+});
+
+test('wonder handling uses the public research, obstacle, and expedition actions', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.landing = 'emberplain';
+  h.state.jobs = { guard: 1 };
+  h.state.wonders = { emberplain: { found: true, sections: [false, false, false, false, false],
+    progress: 0, researches: {}, expeditions: {} } };
+  h.action('wonderResearch', index => { h.state.wonders.emberplain.researches[index] = true; });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['wonderResearch', 0]]);
+
+  h.calls.length = 0;
+  h.state.wonders.emberplain.researches[0] = true;
+  h.action('wonderExpedition', index => { h.state.wonders.emberplain.expeditions[index] = true; });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['wonderExpedition', 0]]);
+
+  h.calls.length = 0;
+  h.state.wonders.emberplain.expeditions[0] = true;
+  h.action('wonderObstacle', () => { h.state.wonders.emberplain.obstacles = { '0:0': true }; });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['wonderObstacle']]);
 });
 
 test('automatic guards do not consume population slots', () => {
