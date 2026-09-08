@@ -14,7 +14,8 @@ function harness() {
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
     window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoPower,
-      autoCraft, autoResearch, autoExpeditions, automationStep, availableWorkers, boot };
+      autoCraft, autoResearch, autoExpeditions, automationStep, queuedDemand,
+      availableWorkers, boot };
   `), context);
   function action(name, fn) {
     api.actions[name] = (...args) => { calls.push([name, ...args]); return fn(...args); };
@@ -144,6 +145,26 @@ test('each stage refreshes resources and preserves queued reserves', () => {
   h.automationStep();
   assert.deepEqual(h.calls, [['build', 'hut']]);
   assert.equal(h.state.res.wood, 5);
+});
+
+test('strict queue order reserves only the first item in each queue', () => {
+  const h = harness();
+  h.state.settings = { strictQueueOrder: true };
+  h.state.queues = {
+    build: [{ type: 'build', id: 'hut' }, { type: 'build', id: 'workshop' }],
+    research: [{ type: 'research', id: 'writing' }, { type: 'research', id: 'masonry' }],
+    expedition: [{ type: 'expedition', id: 'scout' }, { type: 'expedition', id: 'mine' }],
+  };
+  h.api.definitions.BUILDINGS = [
+    { id: 'hut', cost: { wood: 10 } }, { id: 'workshop', cost: { wood: 20 } },
+  ];
+  h.api.definitions.TECHS = [
+    { id: 'writing', cost: 3 }, { id: 'masonry', cost: 5 },
+  ];
+  h.api.definitions.EXPEDITIONS = [
+    { id: 'scout', cost: { food: 4 } }, { id: 'mine', cost: { food: 8 } },
+  ];
+  assert.deepEqual(h.queuedDemand(h.state), { wood: 10, knowledge: 3, food: 4 });
 });
 
 test('building dependencies obey the Crafting toggle', () => {

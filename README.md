@@ -6,6 +6,8 @@ Install [`emberhold_automation.user.js`](https://raw.githubusercontent.com/Nuku/
 
 The automation handles jobs, research, buildings, crafting dependencies, diplomacy, and expeditions. Resources required by queued construction, research, and expeditions are reserved before automation spends or reallocates them. Crafting supplies queued projects and building/expedition dependencies; disabling Crafting disables all automatic crafting. Trials and migration are manual and have no automation controls.
 
+When the game's Strict queue order setting is enabled, resource reservations include only the first item in each queue, matching the game's processing order.
+
 The script uses the page's synchronous `window.emberhold` API. It refreshes state between automation stages, uses current expedition costs, and preserves targeted performers/explorers during ordinary job reassignment. Diplomat pause/resume requires both Jobs and Diplomacy enabled. Event subscriptions are optional.
 
 Power management is enabled by default and has a separate Power toggle. It uses `getState().power` (or `getPower()`) and `setBuildingPower` to allocate whole powered buildings. The current API exposes Living Blocks, Quarry, Deep Mine, Coal Seam, and Factories; Living Blocks are kept powered first, followed by buildings needed for queued outputs, then shortages and ordinary production. Loads are reduced before replacements are enabled, and allocation stops if a setter fails. Power runs before job planning so staffing sees the updated production. The status tooltip shows generation, usage, and factory reserve. Older APIs without power telemetry are skipped. Generator construction remains under the Buildings toggle.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.28.2
+// @version      1.29.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -86,8 +86,33 @@
       Math.max(0, (state.res[id] || 0) - (demand[id] || 0)) >= amount);
   }
 
-  function queuedDemand() {
-    return api().helpers?.queueDemand?.() || {};
+  function queuedDemand(state = snapshot()) {
+    if (!state?.settings?.strictQueueOrder) return api().helpers?.queueDemand?.() || {};
+
+    // In strict mode the game only considers the first entry in each queue.
+    // Do not reserve resources for later entries: doing so can prevent the
+    // active entry from ever becoming affordable.
+    const demand = {};
+    const definitionsByType = {
+      build: definitions().BUILDINGS || [],
+      research: definitions().TECHS || [],
+      expedition: definitions().EXPEDITIONS || [],
+    };
+    for (const type of Object.keys(definitionsByType)) {
+      const entry = state.queues?.[type]?.[0];
+      if (!entry) continue;
+      const def = definitionsByType[type].find(item => item.id === entry.id);
+      if (!def) continue;
+      const cost = type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        : type === 'research'
+          ? { knowledge: def.cost }
+          : (api().helpers?.expeditionCost?.(def) || def.cost);
+      for (const [resource, amount] of Object.entries(cost || {})) {
+        demand[resource] = (demand[resource] || 0) + amount;
+      }
+    }
+    return demand;
   }
 
   function unlocked(def, state) {
