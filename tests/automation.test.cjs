@@ -231,6 +231,21 @@ test('targeted workers are never ordinary reassignment donors', () => {
   assert.deepEqual(h.calls, []);
 });
 
+test('an idle villager starts exploring', () => {
+  const h = harness();
+  h.state.pop = 3;
+  h.state.res.food = 1;
+  h.state.jobs = { forager: 1, explorer: 0 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    explorer: { targeted: true },
+  };
+  h.action('assignExplorer', delta => { h.state.jobs.explorer += delta; });
+  h.autoJobs(h.api.getState(), {});
+  assert.equal(h.state.jobs.explorer, 1);
+  assert.deepEqual(h.calls, [['assignExplorer', 1]]);
+});
+
 test('automatic guards do not consume population slots', () => {
   const h = harness();
   h.state.jobs = { forager: 5, guard: 20, performer: 1 };

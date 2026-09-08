@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.29.3
+// @version      1.29.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -453,6 +453,14 @@
           }
         }
       }
+    }
+    // Explorers are targeted workers, so ordinary production planning must
+    // never retask them. Give exploration its initial worker whenever one is
+    // idle, though, or it can never begin on its own.
+    if (defs.explorer && jobUnlocked(defs.explorer) && count('explorer') < 1 &&
+        availableWorkers(state) > 0) {
+      invoke('assignExplorer', 1);
+      return;
     }
     if (!assignable.length) return;
 
