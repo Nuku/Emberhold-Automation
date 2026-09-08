@@ -655,6 +655,31 @@ test('queued research and buildings are not duplicated', () => {
   assert.deepEqual(h.calls, []);
 });
 
+test('storage takes priority when queued resources cannot fit', () => {
+  const h = harness();
+  h.state.res = { wood: 50 };
+  h.api.helpers.capacityOf = () => 50;
+  h.state.queues = { build: [{ id: 'monument' }] };
+  h.api.definitions.BUILDINGS = [
+    { id: 'hut', max: 5, cost: { wood: 10 } },
+    { id: 'storehouse', max: 5, cost: { wood: 10 } },
+    { id: 'monument', max: 1, cost: { wood: 100 } },
+  ];
+  h.action('build', id => { h.state.bld[id] = (h.state.bld[id] || 0) + 1; });
+  h.autoBuildings(h.api.getState(), { wood: 100 });
+  assert.deepEqual(h.calls, [['build', 'storehouse']]);
+});
+
+test('an impossible queued stock keeps its reservation when no storage can help', () => {
+  const h = harness();
+  h.state.res = { wood: 50 };
+  h.api.helpers.capacityOf = () => 50;
+  h.api.definitions.BUILDINGS = [{ id: 'hut', max: 5, cost: { wood: 10 } }];
+  h.action('build', id => { h.state.bld[id] = 1; });
+  h.autoBuildings(h.api.getState(), { wood: 100 });
+  assert.deepEqual(h.calls, []);
+});
+
 test('morale assignments do not skip research for the tick', () => {
   const h = harness();
   h.state.morale = 50;

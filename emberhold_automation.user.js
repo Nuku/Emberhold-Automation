@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.29.4
+// @version      1.29.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -220,6 +220,7 @@
     'coalSeam', 'forge', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
     'steamPlant', 'dynamo', 'vault', 'factory', 'instrumentHall', 'observatory', 'beacon',
   ];
+  const STORAGE_BUILDINGS = new Set(['storehouse', 'deepStore', 'vault']);
   const JOB_ORDER = [
     'forager', 'woodcutter', 'miner', 'thinker', 'experimentalist', 'tinkerer', 'digger',
     'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
@@ -661,6 +662,33 @@
 
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
+    const capacityOf = api().helpers?.capacityOf;
+    const queueNeedsMoreRoom = typeof capacityOf === 'function' &&
+      Object.entries(demand || {}).some(([resource, amount]) => {
+        const capacity = capacityOf(resource);
+        return Number.isFinite(capacity) && amount > capacity;
+      });
+
+    // A queued project whose required stock cannot fit is permanently stuck.
+    // Let storage consume its reserved materials: it is the one exception to
+    // ordinary queue reservations because it makes those reservations feasible.
+    if (queueNeedsMoreRoom) {
+      for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
+        if (!STORAGE_BUILDINGS.has(id) || state.queues?.build?.some(entry => entry.id === id)) continue;
+        const def = defs.find(item => item.id === id);
+        if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
+        const canBuild = api().helpers?.canBuild;
+        if (canBuild ? !canBuild(id) : state.trial?.id === 'overflow') continue;
+        const cost = typeof api().helpers?.buildingCost === 'function'
+          ? api().helpers.buildingCost(def) : def.cost;
+        if (settings.crafting && craftMissingFor(cost, state, {})) return;
+        if (affordable(cost, state, {}) && invoke('build', id)) return;
+
+        // Do not spend the scarce stock on unrelated construction while an
+        // available storage building is the only path to completing the queue.
+        return;
+      }
+    }
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
       if (state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);

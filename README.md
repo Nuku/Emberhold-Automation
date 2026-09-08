@@ -6,7 +6,7 @@ Install [`emberhold_automation.user.js`](https://raw.githubusercontent.com/Nuku/
 
 The automation handles jobs, research, buildings, crafting dependencies, diplomacy, and expeditions. Resources required by queued construction, research, and expeditions are reserved before automation spends or reallocates them. Crafting supplies queued projects and building/expedition dependencies; disabling Crafting disables all automatic crafting. Trials and migration are manual and have no automation controls.
 
-When the game's Strict queue order setting is enabled, resource reservations include only the first item in each queue, matching the game's processing order.
+When the game's Strict queue order setting is enabled, resource reservations include only the first item in each queue, matching the game's processing order. If queued requirements exceed a resource's storage capacity, the Buildings automation prioritizes an available Storehouse, Deep Store, or Vault and may use the otherwise reserved materials to build it.
 
 The script uses the page's synchronous `window.emberhold` API. It refreshes state between automation stages, uses current expedition costs, starts one explorer when an idle villager is available, and preserves targeted performers/explorers during ordinary job reassignment. Diplomat pause/resume requires both Jobs and Diplomacy enabled. Event subscriptions are optional.
 
