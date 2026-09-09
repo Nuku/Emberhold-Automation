@@ -539,6 +539,29 @@ test('food workers settle at sustainable production across repeated ticks', () =
   assert.equal(h.state.jobs.forager, 20);
 });
 
+test('food workers can be trimmed when live job rates are unavailable', () => {
+  const h = harness();
+  h.state.pop = 16;
+  h.state.jobs = { forager: 10, woodcutter: 2, thinker: 2, tinkerer: 1, explorer: 1 };
+  h.state.res = { food: 625, wood: 105, stone: 347, knowledge: 173 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 0.55 },
+    woodcutter: { res: 'wood', base: 0.45 },
+    thinker: { res: 'knowledge', base: 0.12 },
+    tinkerer: { res: 'tools', base: 0.03 },
+  };
+  h.api.helpers.jobProduction = undefined;
+  h.api.helpers.production = () => ({ food: 25.6, wood: 5.12, knowledge: 2.27 });
+  h.api.helpers.capacityOf = resource => ({ food: 625, wood: 625, stone: 469, knowledge: 1000 }[resource]);
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+  h.action('assign', (id, delta) => { h.state.jobs[id] += delta; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.ok(h.state.jobs.forager < 10);
+  assert.ok(h.state.jobs.woodcutter > 2);
+});
+
 test('starvation overrides non-food sustaining floors', () => {
   const h = harness();
   h.state.pop = 54;

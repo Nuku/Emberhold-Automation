@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.11
+// @version      1.30.12
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -289,7 +289,9 @@
     const performer = defs.performer;
     if (!performer || !jobUnlocked(performer)) return false;
     const performers = Number(state.jobs?.performer || 0);
-    const rates = api().helpers?.production?.(1) || {};
+    const rawRates = api().helpers?.production?.(1) || {};
+    const rates = Object.fromEntries(Object.entries(rawRates)
+      .map(([resource, rate]) => [resource, Number(rate)]));
     // Let the food planner use idle villagers and surplus producers first.
     if (rates.food < 0 || (state.res.food || 0) <= 0.0001) return false;
 
@@ -411,7 +413,10 @@
     // with the current workforce does not mean the whole workforce is surplus.
     const sustainingMinimum = id => {
       const resource = defs[id]?.res;
-      const perWorker = effectiveJobRate?.(id);
+      // Older game builds may not expose jobProduction(). The job definition
+      // still contains the base output rate, so do not conservatively pin all
+      // food workers in place when the live helper is unavailable.
+      const perWorker = Number(effectiveJobRate?.(id) ?? defs[id]?.base ?? 0);
       if (!(perWorker > 0) || !Number.isFinite(rates[resource])) {
         return id === 'forager' ? count(id) : 0;
       }
