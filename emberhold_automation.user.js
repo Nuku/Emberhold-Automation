@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.5
+// @version      1.30.6
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -824,6 +824,30 @@
     if (wonderObstacleQueued(state)) {
       const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
       if (workers > 2) invoke('assignRapture', 2 - workers);
+      else if (workers < 2) {
+        const jobDefs = definitions().JOBS || {};
+        const donorMinimum = id => id === 'forager' ? 1 : 0;
+        const workingOnDemand = id => {
+          const resource = jobDefs[id]?.res;
+          return !!resource && Number(demand[resource] || 0) > 0;
+        };
+        const donorIds = () => Object.keys(snapshot()?.jobs || state.jobs || {})
+          .filter(id => id !== 'guard' && jobDefs[id] && !jobDefs[id].targeted &&
+            !workingOnDemand(id) &&
+            Number((snapshot()?.jobs || state.jobs)[id] || 0) > donorMinimum(id));
+        let available = availableWorkers(state);
+        while (available < 2 - workers) {
+          const jobs = snapshot()?.jobs || state.jobs || {};
+          const donor = donorIds().sort((a, b) => Number(jobs[b] || 0) - Number(jobs[a] || 0))[0];
+          if (!donor) break;
+          const before = jobCount(donor);
+          const target = Math.max(donorMinimum(donor), before - Math.max(1, 2 - workers - available));
+          if (!invoke('setJob', donor, target) && !invoke('assign', donor, target - before)) break;
+          if (jobCount(donor) >= before) break;
+          available = availableWorkers(snapshot());
+        }
+        if (available > 0) invoke('assignRapture', Math.min(2 - workers, available));
+      }
       return;
     }
 
