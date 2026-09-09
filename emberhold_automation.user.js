@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.10
+// @version      1.30.11
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -486,7 +486,10 @@
     const donorMinimum = id => {
       const baseMinimum = coalReserveActive(id) ? minimum(id) :
         (foodEmergency && id !== 'forager' ? 0 : minimum(id));
-      return id === 'woodcutter' ? Math.max(baseMinimum, tinkererWoodMinimum()) : baseMinimum;
+      const limit = jobLimit(id);
+      const finiteSeatMinimum = !foodEmergency && Number.isFinite(limit) ? count(id) : 0;
+      const prerequisiteMinimum = id === 'woodcutter' ? tinkererWoodMinimum() : 0;
+      return Math.max(baseMinimum, finiteSeatMinimum, prerequisiteMinimum);
     };
     // Limited jobs get first claim on non-emergency population. This keeps
     // jobs such as miners and thinkers full even when a queue is requesting a

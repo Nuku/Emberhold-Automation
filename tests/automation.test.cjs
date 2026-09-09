@@ -1057,6 +1057,29 @@ test('tinkerer capacity preserves its woodcutter prerequisite', () => {
   assert.equal(h.state.jobs.woodcutter, 20);
 });
 
+test('filled finite jobs are not traded back and forth as donors', () => {
+  const h = harness();
+  h.state.pop = 8;
+  h.state.jobs = { forager: 1, woodcutter: 3, copperminer: 2, banker: 2 };
+  h.state.res = { food: 100, wood: 100, copper: 0, currency: 0 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    copperminer: { res: 'copper', base: 1, max: 2 },
+    banker: { res: 'currency', base: 1, max: 3 },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, wood: 1, copper: 0, currency: 0 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.copperminer, 2);
+  assert.equal(h.state.jobs.banker, 3);
+  assert.equal(h.state.jobs.woodcutter, 2);
+});
+
 test('boot works without an event subscription API', () => {
   const h = harness();
   h.context.document.getElementById = () => ({});
