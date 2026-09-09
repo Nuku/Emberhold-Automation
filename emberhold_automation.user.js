@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.16
+// @version      1.30.17
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -608,11 +608,14 @@
         filledFallback = jobCount(fallback) > before;
       }
     }
-    if (!planned.size && !filledFallback) {
-      // With no idle workers and no unmet priority, trim a surplus producer
-      // back toward its sustaining minimum on the next tick.
-      const donor = donors.find(id => id === 'forager');
-      if (donor) releaseWorkers(donor, 1);
+    if (!filledFallback) {
+      // Do not keep surplus foragers assigned just because another job has a
+      // plan. Leave those villagers idle for the next automation pass, which
+      // can assign them to the next urgent job.
+      const foragers = jobCount('forager');
+      const minimumForagers = donorMinimum('forager');
+      const surplusForagers = Math.max(0, foragers - minimumForagers);
+      if (surplusForagers) releaseWorkers('forager', surplusForagers);
     }
   }
 
