@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.4
+// @version      1.30.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -795,6 +795,12 @@
     return capacity > 0 && guards >= capacity && injuries === 0;
   }
 
+  function wonderObstacleQueued(state) {
+    const prefix = `wonderObstacle:${state.landing}:`;
+    return (state.queues?.build || []).some(entry =>
+      typeof entry.id === 'string' && entry.id.startsWith(prefix));
+  }
+
   function autoWonderStart(state, demand) {
     if (!settings.wonderStart || !(api().actions?.findWonder || api().action)) return;
     const def = (definitions().WONDERS || []).find(item => item.id === state.landing);
@@ -813,6 +819,14 @@
     const section = (record.sections || []).findIndex(done => !done);
     if (section < 0) return; // The final fate is deliberately left manual.
 
+    // Construction workers do not need a full expedition party. Keep only a
+    // small two-person foothold while an obstacle is waiting in the queue.
+    if (wonderObstacleQueued(state)) {
+      const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
+      if (workers > 2) invoke('assignRapture', 2 - workers);
+      return;
+    }
+
     // These actions are optional until the game exposes them through its
     // public automation API. Rapture staffing is already available today.
     if (api().actions?.wonderResearch) {
@@ -825,7 +839,14 @@
         if (!record.expeditions?.[index] && invoke('wonderExpedition', index)) return;
       }
     }
-    if (api().actions?.wonderObstacle && invoke('wonderObstacle')) return;
+    if (api().actions?.wonderObstacle && invoke('wonderObstacle')) {
+      const after = snapshot();
+      if (wonderObstacleQueued(after)) {
+        const workers = Math.max(0, Math.floor(Number(after.rapture?.workers || 0)));
+        if (workers > 2) invoke('assignRapture', 2 - workers);
+      }
+      return;
+    }
 
     const capacity = Math.max(0, Math.floor(Number(state.jobs?.guard || 0)) * 2);
     const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));

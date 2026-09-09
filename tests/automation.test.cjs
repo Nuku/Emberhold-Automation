@@ -368,6 +368,21 @@ test('wonder handling uses the public research, obstacle, and expedition actions
   assert.deepEqual(h.calls, [['wonderObstacle']]);
 });
 
+test('wonder handling withdraws to two workers while an obstacle is queued', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.landing = 'grayrocks';
+  h.state.jobs = { guard: 3 };
+  h.state.rapture = { landing: 'grayrocks', workers: 6 };
+  h.state.queues = { build: [{ type: 'build', id: 'wonderObstacle:grayrocks:2:0' }] };
+  h.state.wonders = { grayrocks: { found: true, sections: [true, true, false, false, false],
+    progress: 20, researches: {}, expeditions: {}, obstacles: {} } };
+  h.action('assignRapture', delta => { h.state.rapture.workers += delta; });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['assignRapture', -4]]);
+  assert.equal(h.state.rapture.workers, 2);
+});
+
 test('automatic guards do not consume population slots', () => {
   const h = harness();
   h.state.jobs = { forager: 5, guard: 20, performer: 1 };
