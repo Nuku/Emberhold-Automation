@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.12
+// @version      1.30.16
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -24,6 +24,7 @@
     power: true,
     crafting: true,
     diplomacy: true,
+    combat: false,
     expeditions: true,
     wonderStart: false,
     wonderHandle: false,
@@ -236,6 +237,15 @@
   ];
   const FACTORY_TRIAL_GOALS = { industrialization: { resource: 'goods', amount: 100 },
     silence: { resource: 'steel', amount: 100 } };
+  const COMBAT_STAGES = [
+    { id: 'raid', cost: { food: 30, tools: 2 } },
+    { id: 'foray', cost: { food: 40, tools: 2 } },
+    { id: 'skirmish', cost: { food: 50, tools: 3 } },
+    { id: 'assault', cost: { food: 65, tools: 3 } },
+    { id: 'offensive', cost: { food: 80, tools: 4 } },
+    { id: 'breakthrough', cost: { food: 100, tools: 5 } },
+    { id: 'breach', cost: { food: 125, tools: 6 } },
+  ];
 
   function factoryRecipes() {
     const exposed = definitions().FACTORY_RECIPES;
@@ -763,6 +773,7 @@
 
   function autoDiplomacy(state, demand) {
     for (const [id, entry] of Object.entries(state.diplomacy || {})) {
+      if (settings.combat && (entry.hostile === true || Number(entry.disposition) < 0)) continue;
       const request = entry.request;
       if (entry.disposition >= 100) continue;
       if (request && affordable({ [request.res]: request.amount }, state, demand)) {
@@ -786,6 +797,276 @@
         if (affordable(cost, state, demand) && invoke('expedition', def.id)) return;
       }
     }
+  }
+
+  function combatContacts(state) {
+    const contacts = state?.diplomacy && typeof state.diplomacy === 'object'
+      ? Object.entries(state.diplomacy).map(([id, entry]) => [id, entry || {}]) : [];
+    const enemies = state?.enemies && typeof state.enemies === 'object'
+      ? (Array.isArray(state.enemies)
+        ? state.enemies.map((entry, index) => [entry?.id || entry?.nation || index, entry || {}])
+        : Object.entries(state.enemies).map(([id, entry]) => [id, entry || {}])) : [];
+    const merged = new Map([...contacts, ...enemies]);
+    return [...merged.entries()]
+      .filter(([id, entry]) => id && !entry.conquered &&
+        (entry.enemy === true || entry.hostile === true ||
+          ['enemy', 'hostile'].includes(String(entry.relation || entry.status || '').toLowerCase()) ||
+          ((entry.disposition === undefined || Number(entry.disposition) < 0) &&
+            (entry.attack !== undefined || entry.attackPower !== undefined ||
+              entry.spy !== undefined || entry.spyLevel !== undefined))));
+  }
+
+  function combatReduction(entry) {
+    if (Number.isFinite(Number(entry.espionageReduction)) &&
+        Number.isFinite(Number(entry.maximumEspionageReduction))) {
+      return {
+        complete: Number(entry.espionageReduction) >= Number(entry.maximumEspionageReduction),
+        known: true,
+      };
+    }
+    const espionage = entry.espionage || entry.spyStatus ||
+      (entry.spy && typeof entry.spy === 'object' ? entry.spy : {});
+    const current = entry.reduction ?? entry.reduced ?? entry.spyLevel ??
+      (Number.isFinite(Number(entry.spy)) ? entry.spy : undefined) ??
+      espionage.reduction ?? espionage.reduced ?? espionage.level;
+    const maximum = entry.maxReduction ?? entry.spyMax ?? entry.maxSpyLevel ??
+      espionage.maxReduction ?? espionage.maxLevel;
+    if (current === true || espionage.reduced === true) return { complete: true, known: true };
+    if (Number.isFinite(Number(current)) && Number.isFinite(Number(maximum))) {
+      return { complete: Number(current) >= Number(maximum), known: true };
+    }
+    return { complete: false, known: current !== undefined };
+  }
+
+  function combatAction(names, id, ...args) {
+    for (const name of names) {
+      if (api().actions?.[name] || api().action) {
+        return invoke(name, id, ...args);
+      }
+    }
+    return false;
+  }
+
+  function combatGuardCapacity(state) {
+    const limits = api().helpers?.guardLimits?.();
+    if (Number.isFinite(Number(limits?.maximum))) return Math.max(0, Math.floor(Number(limits.maximum)));
+    const reported = api().helpers?.jobCapacity?.('guard');
+    if (Number.isFinite(Number(reported))) return Math.max(0, Math.floor(Number(reported)));
+    return Math.max(0, Math.floor(Number(state.bld?.barracks || 0)) * 2);
+  }
+
+  function siegeCanWin(state, id, entry, healthy) {
+    if (entry.conquerable === true || entry.canConquer === true || entry.siegeReady === true || entry.siege?.canWin === true) {
+      return true;
+    }
+    const canWin = api().helpers?.canWinSiege;
+    if (typeof canWin === 'function') {
+      try {
+        return !!canWin(id, healthy);
+      } catch (_) {
+        // Fall through to compatibility checks.
+      }
+    }
+    const chance = Number(entry.siegeChance ?? entry.siege?.winChance);
+    if (Number.isFinite(chance)) return chance >= 0.65;
+
+    const helper = api().helpers?.canConquer || api().helpers?.canSiege;
+    if (typeof helper === 'function') {
+      try {
+        if (helper(id, state)) return true;
+      } catch (_) {
+        // Fall through to the conservative numeric check.
+      }
+    }
+
+    const own = Number(state.siegeAttack ?? state.combat?.siegeAttack ??
+      state.military?.siegeAttack ?? state.combat?.attack ?? state.military?.attack);
+    const guardAttack = Number(state.guardAttack ?? state.combat?.guardAttack);
+    const total = Number.isFinite(own) ? own : Number.isFinite(guardAttack) ? healthy * guardAttack : NaN;
+    const defense = Number(entry.siegeDefense ?? entry.siege?.defense ??
+      entry.defense ?? entry.fortification);
+    // Keep a margin for a siege rather than treating an even matchup as safe.
+    return Number.isFinite(total) && Number.isFinite(defense) && total >= defense * 1.25;
+  }
+
+  function siegeTarget(state, enemies, healthy) {
+    const candidates = enemies.filter(([id, entry]) => siegeCanWin(state, id, entry, healthy));
+    if (!candidates.length) return null;
+    return candidates.sort((a, b) => {
+      const defenseA = Number(a[1].siegeDefense ?? a[1].siege?.defense ?? a[1].defense ?? a[1].fortification);
+      const defenseB = Number(b[1].siegeDefense ?? b[1].siege?.defense ?? b[1].defense ?? b[1].fortification);
+      return (Number.isFinite(defenseA) ? defenseA : Infinity) -
+        (Number.isFinite(defenseB) ? defenseB : Infinity);
+    })[0];
+  }
+
+  function guardAttackPower(state) {
+    const reported = api().helpers?.guardAttackPower?.(1) ?? api().helpers?.guardAttack?.();
+    if (Number.isFinite(Number(reported)) && Number(reported) > 0) return Number(reported);
+    const value = Number(state.guardAttack ?? state.combat?.guardAttack ?? state.military?.guardAttack);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
+
+  function attackSize(state, entry, healthy, siege = false) {
+    const threat = Number(siege
+      ? entry.siegeDefense ?? entry.siege?.defense ?? entry.defense ?? entry.fortification
+      : entry.attack ?? entry.attackPower ?? entry.defense ?? entry.military?.attack);
+    const minimum = Math.max(2, Math.ceil(combatGuardCapacity(state) * 0.5));
+    if (!Number.isFinite(threat)) return Math.min(healthy, minimum);
+    const needed = Math.ceil((threat * 1.25) / guardAttackPower(state));
+    return Math.min(healthy, Math.max(minimum, needed));
+  }
+
+  function guardLimits(state) {
+    const limits = api().helpers?.guardLimits?.();
+    if (limits && Number.isFinite(Number(limits.healthy))) {
+      return {
+        minimum: Math.max(1, Math.floor(Number(limits.minimum) || 1)),
+        maximum: Math.max(0, Math.floor(Number(limits.maximum) || 0)),
+        healthy: Math.max(0, Math.floor(Number(limits.healthy) || 0)),
+      };
+    }
+    const capacity = combatGuardCapacity(state);
+    const guards = Math.max(0, Math.floor(Number(state.jobs?.guard || 0)));
+    const injuries = Math.max(0, Math.floor(Number(state.guardInjuries || 0)));
+    return { minimum: 2, maximum: capacity, healthy: Math.max(0, guards - injuries) };
+  }
+
+  function plannedAttack(id, count) {
+    const predict = api().helpers?.predictAttack;
+    if (typeof predict !== 'function') return null;
+    try {
+      return predict(id, 'raid', count);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function plannedStage(id, stageId, count) {
+    const predict = api().helpers?.predictAttack;
+    if (typeof predict !== 'function') return null;
+    try {
+      return predict(id, stageId, count);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function plannedSiege(id, count) {
+    const predict = api().helpers?.predictSiege;
+    if (typeof predict !== 'function') return null;
+    try {
+      return predict(id, count);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function minimumWinningCount(planner, id, limits) {
+    for (let count = limits.minimum; count <= limits.healthy; count++) {
+      const plan = planner(id, count);
+      if (plan?.likelyWin) return { count, plan };
+    }
+    return null;
+  }
+
+  function bestAttackPlan(id, state, demand, limits) {
+    // Higher stages buy better loot, so choose the strongest affordable stage
+    // that still has a modeled likely win. Count is minimized within that stage.
+    for (let index = COMBAT_STAGES.length - 1; index >= 0; index--) {
+      const stage = COMBAT_STAGES[index];
+      if (!affordable(stage.cost, state, demand)) continue;
+      const plan = minimumWinningCount((target, count) =>
+        plannedStage(target, stage.id, count), id, limits);
+      if (plan) return { ...plan, stage: stage.id };
+    }
+    return null;
+  }
+
+  function knownEnemyAttack(entry) {
+    const value = entry.knownEnemyAttack ??
+      (entry.militaryKnown === true ? entry.enemyAttack : undefined) ??
+      (entry.enemy === true ? entry.attack ?? entry.attackPower : undefined);
+    if (value === null || value === undefined || value === '') return NaN;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : NaN;
+  }
+
+  function chooseCombatTarget(enemies) {
+    const known = enemies.filter(([, entry]) => Number.isFinite(knownEnemyAttack(entry)))
+      .sort((a, b) => knownEnemyAttack(a[1]) - knownEnemyAttack(b[1]));
+    if (known.length) return known[0];
+    const byDisposition = enemies.filter(([, entry]) => Number.isFinite(Number(entry.disposition)))
+      .sort((a, b) => Number(a[1].disposition) - Number(b[1].disposition));
+    return byDisposition[0] || enemies[Math.floor(Math.random() * enemies.length)];
+  }
+
+  function autoCombat(state, demand = {}) {
+    if (!settings.combat) return;
+    const enemies = combatContacts(state);
+    if (!enemies.length) return;
+
+    // Espionage comes first and gets one action per automation pass. This
+    // keeps a newly discovered enemy from being attacked before its strength
+    // has been reduced as far as the game allows.
+    const spyTarget = enemies.find(([, entry]) => !combatReduction(entry).complete);
+    if (spyTarget) {
+      const entry = spyTarget[1];
+      const exactEspionage = entry.hostile !== undefined || entry.espionageReduction !== undefined ||
+        entry.spies !== undefined || entry.espionageT !== undefined;
+      if (exactEspionage) {
+        if (Number(entry.espionageT || 0) > 0 || state.spyTraining?.target === spyTarget[0]) return;
+        if (Number(entry.spies || 0) < 1) {
+          if (combatAction(['sendSpy', 'spyHire'], spyTarget[0])) return;
+        } else if (combatAction(['startEspionage', 'espionage'], spyTarget[0])) return;
+        return;
+      }
+      if (combatAction(['spy', 'sendSpy', 'espionage'], spyTarget[0])) return;
+    }
+
+    const limits = guardLimits(state);
+    const healthy = limits.healthy;
+    const capacity = limits.maximum;
+    if (typeof api().helpers?.guardLimits !== 'function' && Number(state.guardInjuries || 0) > 0) return;
+    // Two healthy guards is the smallest force worth committing, while half
+    // a built barracks force prevents premature attacks in larger settlements.
+    const minimumAttackSize = typeof api().helpers?.guardLimits === 'function'
+      ? limits.minimum : Math.max(2, Math.ceil(capacity * 0.5));
+    if (healthy < minimumAttackSize) return;
+
+    const exactPlanner = typeof api().helpers?.predictSiege === 'function' &&
+      typeof api().helpers?.predictAttack === 'function';
+    if (exactPlanner) {
+      const conquerable = enemies.filter(([, entry]) => entry.conquerable === true);
+      const conquestTarget = chooseCombatTarget(conquerable);
+      if (conquestTarget && healthy >= 15 && combatAction(['conquer'], conquestTarget[0])) return;
+
+      const siegeCandidates = enemies.filter(([, entry]) => entry.conquerable !== true)
+        .map(([id, entry]) => [id, entry, minimumWinningCount(plannedSiege, id, limits)])
+        .filter(([, , plan]) => plan);
+      const siege = siegeCandidates.sort((a, b) => {
+        const aAttack = knownEnemyAttack(a[1]);
+        const bAttack = knownEnemyAttack(b[1]);
+        return (Number.isFinite(aAttack) ? aAttack : Infinity) -
+          (Number.isFinite(bAttack) ? bAttack : Infinity);
+      })[0];
+      if (siege && combatAction(['siege'], siege[0], siege[2].count)) return;
+
+      const target = chooseCombatTarget(enemies);
+      if (!target) return;
+      const plan = bestAttackPlan(target[0], state, demand, limits);
+      if (plan) combatAction(['attack'], target[0], plan.stage, plan.count);
+      return;
+    }
+
+    const siege = siegeTarget(state, enemies, healthy);
+    if (siege) {
+      const force = attackSize(state, siege[1], healthy, true);
+      if (combatAction(['conquer', 'siege', 'conquerNation', 'siegeNation'], siege[0], force)) return;
+    }
+
+    const target = chooseCombatTarget(enemies);
+    if (target) combatAction(['attack', 'attackNation', 'invade'], target[0], attackSize(state, target[1], healthy));
   }
 
   function wonderFindCost(def, state) {
@@ -947,6 +1228,7 @@
         ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
+        ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
         if (settings[setting]) step(snapshot(), queuedDemand());
@@ -972,6 +1254,7 @@
       <div class="ea-grid">${[
         ['jobs', 'Jobs'], ['research', 'Research'], ['buildings', 'Buildings'],
         ['crafting', 'Crafting'], ['diplomacy', 'Diplomacy'],
+        ['combat', 'Combat'],
         ['expeditions', 'Expeditions'], ['power', 'Power'],
         ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
       ].map(([id, label]) => `<label><input data-setting="${id}" type="checkbox"> ${label}</label>`).join('')}</div>
