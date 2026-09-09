@@ -999,6 +999,24 @@ test('new knowledge jobs fill dynamic caps and remain staffed until food emergen
   }
 });
 
+test('unlocked tinkerer fills its limited capacity with dynamic production', () => {
+  const h = harness();
+  h.state.pop = 6;
+  h.state.jobs = { forager: 1 };
+  h.state.res = { food: 100, tools: 0 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    tinkerer: { res: 'tools', base: 0, max: 2, unlock: () => true },
+  };
+  h.api.helpers.jobProduction = id => id === 'tinkerer' ? 1 : 1;
+  h.api.helpers.production = () => ({ food: 1, tools: 0 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.tinkerer, 2);
+});
+
 test('boot works without an event subscription API', () => {
   const h = harness();
   h.context.document.getElementById = () => ({});
