@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.9
+// @version      1.30.10
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -475,8 +475,19 @@
     // staffing through needs/shortage planning, but should not block finite
     // capacity jobs while the stockpile has room to recover.
     const foodEmergency = stock('food') <= 0;
-    const donorMinimum = id => coalReserveActive(id) ? minimum(id) :
-      (foodEmergency && id !== 'forager' ? 0 : minimum(id));
+    // Tinkerer capacity is tied to the woodcutter count. Preserve the
+    // woodcutters needed for the capacity we are trying to fill, otherwise
+    // staffing Tinkerers lowers their cap and causes a one-tick oscillation.
+    const tinkererWoodMinimum = () => {
+      if (!defs.tinkerer || !Number.isFinite(jobLimit('tinkerer'))) return 0;
+      const target = Math.max(count('tinkerer'), jobLimit('tinkerer'));
+      return Math.max(0, (target - 1) * 5);
+    };
+    const donorMinimum = id => {
+      const baseMinimum = coalReserveActive(id) ? minimum(id) :
+        (foodEmergency && id !== 'forager' ? 0 : minimum(id));
+      return id === 'woodcutter' ? Math.max(baseMinimum, tinkererWoodMinimum()) : baseMinimum;
+    };
     // Limited jobs get first claim on non-emergency population. This keeps
     // jobs such as miners and thinkers full even when a queue is requesting a
     // different resource. Food emergencies deliberately skip this fill so the

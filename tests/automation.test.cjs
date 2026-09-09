@@ -1019,8 +1019,8 @@ test('unlocked tinkerer fills its limited capacity with dynamic production', () 
 
 test('food deficit with a healthy stockpile does not block capped jobs', () => {
   const h = harness();
-  h.state.pop = 6;
-  h.state.jobs = { forager: 1, woodcutter: 5 };
+  h.state.pop = 8;
+  h.state.jobs = { forager: 1, woodcutter: 7 };
   h.state.res = { food: 1975, wood: 194, tools: 0 };
   h.api.definitions.JOBS = {
     forager: { res: 'food', base: 1 },
@@ -1034,6 +1034,27 @@ test('food deficit with a healthy stockpile does not block capped jobs', () => {
   h.autoJobs(h.api.getState(), {});
 
   assert.equal(h.state.jobs.tinkerer, 2);
+});
+
+test('tinkerer capacity preserves its woodcutter prerequisite', () => {
+  const h = harness();
+  h.state.pop = 27;
+  h.state.jobs = { forager: 3, woodcutter: 23, tinkerer: 1 };
+  h.state.res = { food: 1975, wood: 194, tools: 0 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    tinkerer: { res: 'tools', base: 1, max: () => 1 + Math.floor(h.state.jobs.woodcutter / 5), unlock: () => true },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, wood: 26.3, tools: 0 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.tinkerer, 5);
+  assert.equal(h.state.jobs.woodcutter, 20);
 });
 
 test('boot works without an event subscription API', () => {
