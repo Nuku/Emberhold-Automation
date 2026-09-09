@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.17
+// @version      1.30.18
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -372,7 +372,9 @@
       ['miner', state.pop >= 6 ? 1 : 0],
       ['thinker', state.pop >= 8 ? 1 : 0],
     ];
-    const rates = api().helpers?.production?.(1) || {};
+    const rawRates = api().helpers?.production?.(1) || {};
+    const rates = Object.fromEntries(Object.entries(rawRates)
+      .map(([resource, rate]) => [resource, Number(rate)]));
     // production() already includes all upkeep. Feed the village before queue
     // reserves or diplomacy: a demanded job must still be able to donate.
     const foodRate = Number.isFinite(rates.food) ? rates.food : 0;
