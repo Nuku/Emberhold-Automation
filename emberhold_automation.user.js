@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.7
+// @version      1.30.8
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -366,7 +366,8 @@
     const foodRate = Number.isFinite(rates.food) ? rates.food : 0;
     const foodWorkerRate = Number(effectiveJobRate?.('forager') ?? defs.forager?.base ?? 0);
     const foodBuffer = (state.res.food || 0) <= 0 ? foodWorkerRate * 0.25 : 0;
-    if (assignable.includes('forager') && foodWorkerRate > 0 && foodRate < foodBuffer) {
+    if (assignable.includes('forager') && foodWorkerRate > 0 &&
+        stock('food') <= 0 && foodRate < foodBuffer) {
       const required = Math.ceil((foodBuffer - foodRate) / foodWorkerRate);
       let missing = Math.max(0, required - availableWorkers(state));
       const donors = Object.keys(state.jobs || {}).filter(id => id !== 'forager' &&
@@ -470,10 +471,10 @@
 
     const available = availableWorkers(state);
     const perWorker = id => Math.max(0, Number(effectiveJobRate?.(id) || defs[id]?.base || 0));
-    // An empty or net-negative food store is an emergency. Do not preserve a
-    // calculated sustaining floor for another production job while villagers
-    // are starving; food must be able to reclaim those workers first.
-    const foodEmergency = stock('food') <= 0 || foodRate < 0;
+    // An empty food store is an emergency. A negative rate still raises food
+    // staffing through needs/shortage planning, but should not block finite
+    // capacity jobs while the stockpile has room to recover.
+    const foodEmergency = stock('food') <= 0;
     const donorMinimum = id => coalReserveActive(id) ? minimum(id) :
       (foodEmergency && id !== 'forager' ? 0 : minimum(id));
     // Limited jobs get first claim on non-emergency population. This keeps
