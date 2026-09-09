@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.3
+// @version      1.30.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -806,7 +806,7 @@
     if (affordableWonderFind(cost, state, demand)) invoke('findWonder');
   }
 
-  function autoWonderHandle(state) {
+  function autoWonderHandle(state, demand = {}) {
     if (!settings.wonderHandle) return;
     const record = state.wonders?.[state.landing];
     if (!record?.found) return;
@@ -832,9 +832,41 @@
     // A zero-worker Wonder assignment is a new attempt. Wait for the full,
     // healthy Guard force rather than feeding villagers into an uncovered run.
     if (workers === 0 && !wonderGuardsReady(state)) return;
-    const available = availableWorkers(state);
-    if (workers < capacity && available > 0) {
-      invoke('assignRapture', Math.min(capacity - workers, available));
+    const needed = Math.max(0, capacity - workers);
+    if (!needed) return;
+
+    // Rapture workers are villagers, not Guards. If all villagers are already
+    // assigned, reclaim ordinary production seats before sending them in.
+    const jobDefs = definitions().JOBS || {};
+    const donorMinimum = id => id === 'forager' ? 1 : 0;
+    const workingOnDemand = id => {
+      const resource = jobDefs[id]?.res;
+      return !!resource && Number(demand[resource] || 0) > 0;
+    };
+    const donorIds = () => Object.keys(snapshot()?.jobs || state.jobs || {})
+      .filter(id => id !== 'guard' && jobDefs[id] && !jobDefs[id].targeted &&
+        !workingOnDemand(id) &&
+        Number((snapshot()?.jobs || state.jobs)[id] || 0) > donorMinimum(id))
+      .sort((a, b) => {
+        const jobs = snapshot()?.jobs || state.jobs || {};
+        const aOrder = JOB_ORDER.indexOf(a);
+        const bOrder = JOB_ORDER.indexOf(b);
+        return Number(jobs[b] || 0) - Number(jobs[a] || 0) ||
+          (bOrder === -1 ? -1 : aOrder === -1 ? 1 : bOrder - aOrder);
+      });
+    let available = availableWorkers(state);
+    while (available < needed) {
+      const donor = donorIds()[0];
+      if (!donor) break;
+      const before = jobCount(donor);
+      const target = Math.max(donorMinimum(donor), before - Math.max(1, needed - available));
+      if (!invoke('setJob', donor, target) && !invoke('assign', donor, target - before)) break;
+      const after = jobCount(donor);
+      if (after >= before) break;
+      available = availableWorkers(snapshot());
+    }
+    if (available > 0) {
+      invoke('assignRapture', Math.min(needed, available));
     }
   }
 

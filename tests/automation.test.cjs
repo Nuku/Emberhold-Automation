@@ -304,6 +304,46 @@ test('wonder handling fills available Rapture capacity but leaves the fate manua
   assert.deepEqual(h.calls, [['assignRapture', 4]]);
 });
 
+test('wonder handling reclaims ordinary workers when no villagers are idle', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.pop = 5;
+  h.state.landing = 'emberplain';
+  h.state.bld = { barracks: 1 };
+  h.state.jobs = { forager: 1, woodcutter: 4, guard: 2 };
+  h.state.wonders = { emberplain: { found: true, sections: [false, false, false, false, false],
+    progress: 0, researches: {}, expeditions: {} } };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 }, woodcutter: { res: 'wood', base: 1 }, guard: {},
+  };
+  h.action('setJob', (id, count) => { h.state.jobs[id] = count; });
+  h.action('assignRapture', delta => {
+    h.state.rapture = { landing: 'emberplain', workers: delta };
+  });
+  h.autoWonderHandle(h.api.getState());
+  assert.deepEqual(h.calls, [['setJob', 'woodcutter', 0], ['assignRapture', 4]]);
+});
+
+test('wonder handling preserves workers producing resources needed by queued work', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.pop = 5;
+  h.state.landing = 'emberplain';
+  h.state.bld = { barracks: 1 };
+  h.state.jobs = { forager: 1, woodcutter: 4, guard: 2 };
+  h.state.wonders = { emberplain: { found: true, sections: [false, false, false, false, false],
+    progress: 0, researches: {}, expeditions: {} } };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 }, woodcutter: { res: 'wood', base: 1 }, guard: {},
+  };
+  h.action('setJob', (id, count) => { h.state.jobs[id] = count; });
+  h.action('assignRapture', delta => {
+    h.state.rapture = { landing: 'emberplain', workers: delta };
+  });
+  h.autoWonderHandle(h.api.getState(), { wood: 10 });
+  assert.deepEqual(h.calls, []);
+});
+
 test('wonder handling uses the public research, obstacle, and expedition actions', () => {
   const h = harness();
   h.settings.wonderHandle = true;
