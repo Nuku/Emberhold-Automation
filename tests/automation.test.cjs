@@ -547,6 +547,25 @@ test('combat uses the documented prediction helpers and action signatures', () =
   assert.deepEqual(h.calls, [['attack', 'weak', 'raid', 4]]);
 });
 
+test('combat prefers a 75 percent attack chance when extra guards can provide it', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 160, tools: 8 };
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: 2,
+      enemyAttack: 2, espionageReduction: 40, maximumEspionageReduction: 40, spies: 1 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 10 });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = (id, stage, count) => ({
+    likelyWin: count >= 2,
+    chance: count >= 3 ? 0.75 : 0.55,
+  });
+  h.action('attack', (id, stage, count) => { h.state.attack = { id, stage, count }; });
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, [['attack', 'enemy', 'breach', 3]]);
+});
+
 test('combat evaluates all affordable non-siege attack stages', () => {
   const h = harness();
   h.settings.combat = true;

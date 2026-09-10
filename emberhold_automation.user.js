@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.31
+// @version      1.30.32
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1160,12 +1160,20 @@
     }
   }
 
+  function chanceFraction(plan) {
+    const chance = Number(plan?.chance);
+    if (!Number.isFinite(chance)) return NaN;
+    return chance > 1 ? chance / 100 : chance;
+  }
+
   function minimumWinningCount(planner, id, limits) {
+    let likelyWin;
     for (let count = limits.minimum; count <= limits.healthy; count++) {
       const plan = planner(id, count);
-      if (plan?.likelyWin) return { count, plan };
+      if (plan?.likelyWin && !likelyWin) likelyWin = { count, plan };
+      if (chanceFraction(plan) >= 0.75) return { count, plan };
     }
-    return null;
+    return likelyWin || null;
   }
 
   function bestAttackPlan(id, state, demand, limits) {
