@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.22
+// @version      1.30.23
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -313,19 +313,19 @@
         ? [state.tradePartner] : state.tradePartners)
       : [state.tradePartner];
     const commonality = state.techs?.commonality && state.policy === 'commonality';
-    // Workplace Ethics adds a -0.0068/s morale penalty for each villager
-    // beyond the base-20 workforce when the village is running full crews.
-    const ethicsPressure = state.techs?.workplaceEthics
-      ? Math.max(0, state.pop - 20) * 0.0068 : 0;
     const conquered = commonality ? 0 : [...new Set(partners)]
       .filter(id => id && state.diplomacy?.[id]?.conquered).length;
-    // The API does not expose morale drift. Budget for storms (-.060), winter
-    // (-.006), and secure food at high morale (-.008), plus .025/s recovery.
-    // Do not rely on Shrine/Hospital bonuses that disappear as morale rises.
-    // Keeping this target at the ceiling avoids repeated hiring and firing.
-    const pressure = Math.max(0, state.pop - 20) * 0.01 +
-      ethicsPressure + Number(state.bld?.livingBlock || 0) * 0.1 + conquered;
-    const target = Math.ceil((pressure + 0.060 + 0.006 + 0.008 + 0.025) / 0.10);
+    const telemetry = api().helpers?.morale?.();
+    const liveRate = Number(telemetry?.rate ?? api().helpers?.moraleRate?.());
+    const marginal = Number(api().helpers?.marginalMorale?.('performer'));
+    // Prefer the game's live morale equation. A small positive margin keeps
+    // recovery going as low-morale bonuses disappear and new penalties appear.
+    // The legacy estimate remains for older game builds without telemetry.
+    const target = Number.isFinite(liveRate) && marginal > 0
+      ? performers + Math.max(0, Math.ceil((0.025 - liveRate) / marginal - 1e-9))
+      : Math.ceil((Math.max(0, state.pop - 20) * 0.01 +
+        Number(state.bld?.livingBlock || 0) * 0.1 + conquered +
+        0.060 + 0.006 + 0.008 + 0.025) / 0.10);
     if (performers > target) {
       for (let i = performers; i > target; i--) {
         if (!invoke('assignPerformer', -1)) break;

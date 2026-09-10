@@ -1124,8 +1124,18 @@ test('morale accounts for housing pressure and conquest, including Commonality',
 test('morale accounts for Workplace Ethics full-crew pressure', () => {
   const h = moraleHarness();
   h.state.techs.workplaceEthics = true;
+  h.api.helpers.morale = () => ({ rate: -0.41 });
+  h.api.helpers.marginalMorale = () => 0.10;
   h.autoMorale(h.api.getState());
-  assert.equal(h.state.jobs.performer, 7);
+  assert.equal(h.state.jobs.performer, 6);
+});
+
+test('morale staffing follows live telemetry instead of guessed pressures', () => {
+  const h = moraleHarness();
+  h.api.helpers.morale = () => ({ rate: -0.21 });
+  h.api.helpers.marginalMorale = () => 0.10;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 4);
 });
 
 test('failed donor release does not overassign performers', () => {
