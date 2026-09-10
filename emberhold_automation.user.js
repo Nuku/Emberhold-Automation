@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.23
+// @version      1.30.24
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -35,6 +35,8 @@
   let timer = null;
   let busy = false;
   let lastAction = 'Waiting for Emberhold';
+  let lastInvocationResult;
+  let combatSuccessStreak = 0;
   const pausedDiplomats = Object.create(null);
 
   function loadSettings() {
@@ -71,6 +73,7 @@
     try {
       const before = JSON.stringify(snapshot());
       const result = action(...args);
+      lastInvocationResult = result;
       if (result === false || JSON.stringify(snapshot()) === before) {
         lastAction = `No change: ${name}`;
         return false;
@@ -872,10 +875,27 @@
   function combatAction(names, id, ...args) {
     for (const name of names) {
       if (api().actions?.[name] || api().action) {
-        return invoke(name, id, ...args);
+        if (!invoke(name, id, ...args)) return false;
+        return { name, result: lastInvocationResult };
       }
     }
     return false;
+  }
+
+  function recordCombatOutcome(action) {
+    if (!action) {
+      combatSuccessStreak = 0;
+      return;
+    }
+    const result = action?.result;
+    if (!result || (result.action !== 'attack' && result.action !== 'raid')) return;
+    if (result.ok && result.succeeded === true) combatSuccessStreak++;
+    else if (result.ok && result.succeeded === false) combatSuccessStreak = 0;
+  }
+
+  function escalatedAttackCount(count, limits) {
+    if (combatSuccessStreak < 2) return count;
+    return Math.min(limits.healthy, count + combatSuccessStreak - 1);
   }
 
   function combatGuardCapacity(state) {
@@ -1046,13 +1066,17 @@
       const exactEspionage = entry.hostile !== undefined || entry.espionageReduction !== undefined ||
         entry.spies !== undefined || entry.espionageT !== undefined;
       if (exactEspionage) {
-        if (Number(entry.espionageT || 0) > 0 || state.spyTraining?.target === spyTarget[0]) return;
-        if (Number(entry.spies || 0) < 1) {
-          if (combatAction(['sendSpy', 'spyHire'], spyTarget[0])) return;
-        } else if (combatAction(['startEspionage', 'espionage'], spyTarget[0])) return;
-        return;
-      }
-      if (combatAction(['spy', 'sendSpy', 'espionage'], spyTarget[0])) return;
+        const hasSpyTech = !!state.techs?.spies || api().helpers?.tech?.('spies') === true;
+        const hasEspionageTech = !!state.techs?.espionage || api().helpers?.tech?.('espionage') === true;
+        if (Number(entry.espionageT || 0) <= 0 && state.spyTraining?.target !== spyTarget[0]) {
+          if (Number(entry.spies || 0) < 1 && hasSpyTech) {
+            if (combatAction(['sendSpy', 'spyHire'], spyTarget[0])) return;
+          } else if (Number(entry.spies || 0) >= 1 && hasEspionageTech &&
+              combatAction(['startEspionage', 'espionage'], spyTarget[0])) return;
+        }
+        // Intelligence is helpful but optional. Continue to a cautious raid
+        // when spying is locked, unavailable, or still in progress.
+      } else if (combatAction(['spy', 'sendSpy', 'espionage'], spyTarget[0])) return;
     }
 
     const limits = guardLimits(state);
@@ -1085,8 +1109,21 @@
 
       const target = chooseCombatTarget(enemies);
       if (!target) return;
+      if (!Number.isFinite(knownEnemyAttack(target[1]))) {
+        const stage = COMBAT_STAGES[0];
+        if (limits.healthy >= limits.minimum && affordable(stage.cost, state, demand)) {
+          const action = combatAction(['attack'], target[0], stage.id,
+            escalatedAttackCount(limits.minimum, limits));
+          recordCombatOutcome(action);
+        }
+        return;
+      }
       const plan = bestAttackPlan(target[0], state, demand, limits);
-      if (plan) combatAction(['attack'], target[0], plan.stage, plan.count);
+      if (plan) {
+        const action = combatAction(['attack'], target[0], plan.stage,
+          escalatedAttackCount(plan.count, limits));
+        recordCombatOutcome(action);
+      }
       return;
     }
 

@@ -567,6 +567,7 @@ test('combat evaluates all affordable non-siege attack stages', () => {
 test('combat starts documented espionage before planning attacks', () => {
   const h = harness();
   h.settings.combat = true;
+  h.state.techs = { spies: true, espionage: true };
   h.state.diplomacy = {
     enemy: { hostile: true, conquered: false, enemyAttack: 100,
       knownEnemyAttack: null, espionageReduction: 0, maximumEspionageReduction: 40,
@@ -576,6 +577,48 @@ test('combat starts documented espionage before planning attacks', () => {
   h.action('attack', () => {});
   h.autoCombat(h.api.getState());
   assert.deepEqual(h.calls, [['startEspionage', 'enemy']]);
+});
+
+test('combat raids cautiously when espionage is unavailable', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 30, tools: 2 };
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: null,
+      enemyAttack: 160, espionageReduction: 0, maximumEspionageReduction: 100,
+      spies: 0, espionageT: 0 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 10 });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = () => ({ likelyWin: false });
+  h.action('attack', () => {});
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, [['attack', 'enemy', 'raid', 1]]);
+});
+
+test('combat increases force after consecutive successful attacks', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 500, tools: 20 };
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: 2,
+      enemyAttack: 2, espionageReduction: 40, maximumEspionageReduction: 40, spies: 1 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 10 });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = (id, stage, count) =>
+    ({ likelyWin: id === 'enemy' && stage === 'breach' && count >= 2 });
+  h.action('attack', () => {
+    h.state.res.food -= 1;
+    return { ok: true, action: 'attack', succeeded: true };
+  });
+
+  h.autoCombat(h.api.getState());
+  h.autoCombat(h.api.getState());
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls.map(call => call.slice(1)), [
+    ['enemy', 'breach', 2], ['enemy', 'breach', 2], ['enemy', 'breach', 3],
+  ]);
 });
 
 test('combat falls back to worst disposition and blocks diplomacy for declared enemies', () => {
@@ -597,7 +640,7 @@ test('combat falls back to worst disposition and blocks diplomacy for declared e
   h.autoDiplomacy(h.api.getState(), {});
   assert.deepEqual(h.calls, []);
   h.autoCombat(h.api.getState());
-  assert.deepEqual(h.calls, [['attack', 'hostile', 'raid', 2]]);
+  assert.deepEqual(h.calls, [['attack', 'hostile', 'raid', 1]]);
 });
 
 test('failed diplomat removal does not create a replacement obligation', () => {
