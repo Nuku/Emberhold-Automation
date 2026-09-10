@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.35
+// @version      1.30.36
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1131,6 +1131,22 @@
     return { minimum: 2, maximum: capacity, healthy: Math.max(0, guards - injuries) };
   }
 
+  function guardRecoveryNeeded(state, limits) {
+    const injuries = Number(state.guardInjuries ?? state.combat?.guardInjuries ?? state.military?.guardInjuries);
+    const healthy = Math.max(0, Number(limits.healthy) || 0);
+    const capacity = Number(limits.maximum);
+    if (Number.isFinite(capacity) && capacity > 0) {
+      const injured = Number.isFinite(injuries) ? Math.max(0, injuries) : 0;
+      const missing = Math.max(0, capacity - healthy - injured);
+      return (injured + missing) / capacity >= 0.5;
+    }
+    if (!Number.isFinite(injuries) || injuries <= 0) return false;
+    const reportedTotal = Number(state.jobs?.guard);
+    const total = Number.isFinite(reportedTotal) && reportedTotal >= injuries
+      ? reportedTotal : healthy + injuries;
+    return total > 0 && injuries / total >= 0.5;
+  }
+
   function plannedAttack(id, count) {
     const predict = api().helpers?.predictAttack;
     if (typeof predict !== 'function') return null;
@@ -1238,6 +1254,7 @@
     const limits = guardLimits(state);
     const healthy = limits.healthy;
     const capacity = limits.maximum;
+    if (guardRecoveryNeeded(state, limits)) return;
     if (typeof api().helpers?.guardLimits !== 'function' && Number(state.guardInjuries || 0) > 0) return;
     // Two healthy guards is the smallest force worth committing, while half
     // a built barracks force prevents premature attacks in larger settlements.

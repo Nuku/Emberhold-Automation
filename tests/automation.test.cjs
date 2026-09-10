@@ -494,6 +494,61 @@ test('combat waits for a healthy force and ignores peaceful contacts', () => {
   assert.deepEqual(h.calls, [['attack', 'enemy', 4]]);
 });
 
+test('combat pauses when half the Guard force needs replacement', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 160, tools: 8 };
+  h.state.jobs = { guard: 10 };
+  h.state.guardInjuries = 5;
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: 2,
+      espionageReduction: 40, maximumEspionageReduction: 40, spies: 1 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 10 - h.state.guardInjuries });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = () => ({ likelyWin: true, chance: 0.8 });
+  h.action('attack', () => {});
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, []);
+
+  h.state.guardInjuries = 3;
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, [['attack', 'enemy', 'breach', 1]]);
+});
+
+test('combat pauses when half the Guard force is missing', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 160, tools: 8 };
+  h.state.jobs = { guard: 5 };
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: 2,
+      espionageReduction: 40, maximumEspionageReduction: 40, spies: 1 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 5 });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = () => ({ likelyWin: true, chance: 0.8 });
+  h.action('attack', () => {});
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, []);
+});
+
+test('combat still permits espionage while Guards recover', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.techs = { spies: true };
+  h.state.jobs = { guard: 10 };
+  h.state.guardInjuries = 5;
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, espionageReduction: 0,
+      maximumEspionageReduction: 40, spies: 0 },
+  };
+  h.action('sendSpy', id => { h.state.diplomacy[id].spies = 1; });
+  h.action('attack', () => {});
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls, [['sendSpy', 'enemy']]);
+});
+
 test('combat chooses a likely winning siege before an ordinary attack', () => {
   const h = harness();
   h.settings.combat = true;
