@@ -1230,6 +1230,27 @@ test('tinkerer capacity preserves its woodcutter prerequisite', () => {
   assert.equal(h.state.jobs.woodcutter, 20);
 });
 
+test('stockpiled woodcutters can donate to capped knowledge jobs', () => {
+  const h = harness();
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1, woodcutter: 3, experimentalist: 1 };
+  h.state.res = { food: 100, wood: 1000, knowledge: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    experimentalist: { res: 'knowledge', base: 0.6, max: 3 },
+  };
+  h.api.helpers.jobProduction = id => h.api.definitions.JOBS[id].base;
+  h.api.helpers.capacityOf = resource => resource === 'wood' ? 1000 : 100;
+  h.api.helpers.production = () => ({ food: 1, wood: 0, knowledge: 0 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.experimentalist, 3);
+  assert.equal(h.state.jobs.woodcutter, 1);
+});
+
 test('filled finite jobs are not traded back and forth as donors', () => {
   const h = harness();
   h.state.pop = 8;

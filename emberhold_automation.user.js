@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.18
+// @version      1.30.19
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -501,8 +501,21 @@
       return Math.max(0, (target - 1) * 5);
     };
     const donorMinimum = id => {
+      const cappedJobNeedsWorkers = assignable.some(job => {
+        const limit = jobLimit(job);
+        return Number.isFinite(limit) && count(job) < limit;
+      });
+      const woodIsStocked = id === 'woodcutter' &&
+        stock('wood') >= reserve('wood') && !(demand.wood || 0) &&
+        (rates.wood || 0) >= 0 && cappedJobNeedsWorkers;
+      // A positive wood stockpile means the net-production floor is not a
+      // useful donor constraint. Keep the ordinary one-worker floor, then
+      // apply the separate Woodcutter prerequisite for Tinkerers below.
+      const sustainingFloor = woodIsStocked
+        ? (minimums.find(item => item[0] === id)?.[1] || 0)
+        : minimum(id);
       const baseMinimum = coalReserveActive(id) ? minimum(id) :
-        (foodEmergency && id !== 'forager' ? 0 : minimum(id));
+        (foodEmergency && id !== 'forager' ? 0 : sustainingFloor);
       const limit = jobLimit(id);
       const finiteSeatMinimum = !foodEmergency && Number.isFinite(limit) ? count(id) : 0;
       const prerequisiteMinimum = id === 'woodcutter' ? tinkererWoodMinimum() : 0;
