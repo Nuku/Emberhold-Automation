@@ -1121,6 +1121,13 @@ test('morale accounts for housing pressure and conquest, including Commonality',
   assert.equal(h.state.jobs.performer, 7);
 });
 
+test('morale accounts for Workplace Ethics full-crew pressure', () => {
+  const h = moraleHarness();
+  h.state.techs.workplaceEthics = true;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 7);
+});
+
 test('failed donor release does not overassign performers', () => {
   const h = moraleHarness();
   h.action('setJob', () => false);
