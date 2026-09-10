@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.29
+// @version      1.30.30
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1481,8 +1481,15 @@
   }
 
   function gameSettingsHost() {
-    const selectors = ['#settings', '.settings', '[data-view="settings"]', '[data-tab="settings"]', 'main .settings'];
-    return selectors.map(selector => document.querySelector(selector)).find(Boolean) || null;
+    const chronicleHeading = Array.from(document.querySelectorAll('h1,h2,h3,h4,legend,div,section'))
+      .find(node => node.children.length === 0 && /^\s*chronicle tools\s*$/i.test(node.textContent || ''));
+    if (chronicleHeading) return chronicleHeading.closest('section, article') || chronicleHeading.parentElement;
+
+    // Avoid generic `.settings` selectors: Emberhold also uses that name for
+    // the navigation button, which would place the controls beside the tab.
+    const selectors = ['#settings-view', '.settings-view', '[data-screen="settings"]', '[data-view="settings"]'];
+    return selectors.map(selector => document.querySelector(selector))
+      .find(node => node && !['BUTTON', 'A'].includes(node.tagName)) || null;
   }
 
   function moveDetailedSettings(panel) {
