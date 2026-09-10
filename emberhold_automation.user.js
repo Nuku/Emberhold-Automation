@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.25
+// @version      1.30.26
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1443,7 +1443,7 @@
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
-        if (!settings[setting] || !logicAllows(setting, snapshot())) continue;
+        if (!logicValue(setting, snapshot(), settings[setting])) continue;
         // autoJobs can immediately reclaim a villager that autoMorale just
         // moved into performers (usually to satisfy a wood shortage). Let the
         // targeted morale assignment settle for one tick before ordinary job
@@ -1524,10 +1524,11 @@
     return false;
   }
 
-  function logicAllows(key, state) {
+  function logicValue(key, state, fallback) {
     const rules = settings.logicOverrides?.[key];
-    if (!Array.isArray(rules) || rules.length === 0) return true;
-    return rules.every(rule => compareLogic(readPath(state, rule.path), rule.op, rule.value));
+    if (!Array.isArray(rules) || rules.length === 0) return fallback;
+    const match = rules.find(rule => compareLogic(readPath(state, rule.path), rule.op, rule.value));
+    return match ? (match.result === undefined ? fallback : !!match.result) : fallback;
   }
 
   function openLogicEditor(key, panel) {
@@ -1539,31 +1540,40 @@
       editor = document.createElement('div');
       editor.id = 'ea-logic-editor';
       editor.className = 'ea-logic-editor';
-      editor.innerHTML = `<strong>Conditional logic</strong><div class="ea-logic-help">Shift-clicked setting: <code data-logic-key></code><br>Use JSON rules with state paths, for example <code>[{"path":"day","op":">=","value":50}]</code>.</div><textarea data-logic-text rows="5" spellcheck="false"></textarea><div><button type="button" data-logic-save>Save logic</button> <button type="button" data-logic-clear>Clear</button><span data-logic-status></span></div>`;
       panel.querySelector('.ea-settings').appendChild(editor);
-      editor.querySelector('[data-logic-save]').addEventListener('click', () => {
-        const target = editor.dataset.logicKey;
-        try {
-          const parsed = JSON.parse(editor.querySelector('[data-logic-text]').value || '[]');
-          if (!Array.isArray(parsed) || parsed.some(rule => !rule.path || !rule.op)) throw new Error('Expected an array of rules with path and op');
-          settings.logicOverrides[target] = parsed;
-          saveSettings();
-          editor.querySelector('[data-logic-status]').textContent = ' Saved';
-        } catch (error) {
-          editor.querySelector('[data-logic-status]').textContent = ` ${error.message}`;
-        }
-      });
-      editor.querySelector('[data-logic-clear]').addEventListener('click', () => {
-        delete settings.logicOverrides[editor.dataset.logicKey];
-        saveSettings();
-        editor.querySelector('[data-logic-text]').value = '[]';
-        editor.querySelector('[data-logic-status]').textContent = ' Cleared';
-      });
     }
     editor.dataset.logicKey = key;
-    editor.querySelector('[data-logic-key]').textContent = key;
-    editor.querySelector('[data-logic-text]').value = JSON.stringify(settings.logicOverrides?.[key] || [], null, 2);
-    editor.querySelector('[data-logic-status]').textContent = '';
+    editor._draft = JSON.parse(JSON.stringify(settings.logicOverrides?.[key] || []));
+    const paths = [
+      ['day', 'Game day'], ['pop', 'Population'], ['morale', 'Morale'],
+      ['power.generated', 'Power generated'], ['power.used', 'Power used'],
+      ['res.wood', 'Wood'], ['res.stone', 'Stone'], ['res.food', 'Food'],
+      ['res.knowledge', 'Knowledge'], ['res.tools', 'Tools'],
+      ['bld.factory', 'Factories'], ['bld.livingBlock', 'Living Blocks'],
+    ];
+    const operators = [['==', 'equals'], ['!=', 'does not equal'], ['>=', 'at least'], ['>', 'greater than'], ['<=', 'at most'], ['<', 'less than'], ['exists', 'exists'], ['includes', 'includes']];
+    const render = () => {
+      editor.innerHTML = `<strong>Conditional logic for <code>${key}</code></strong><div class="ea-logic-help">Rules are checked from top to bottom. The first matching rule determines the setting value.</div><table class="ea-logic-table"><thead><tr><th>Variable</th><th>Check</th><th>Value</th><th>Result</th><th></th></tr></thead><tbody></tbody></table><div class="ea-logic-actions"><button type="button" data-logic-add>Add rule</button> <button type="button" data-logic-save>Save</button> <button type="button" data-logic-clear>Clear</button><span data-logic-status></span></div>`;
+      const body = editor.querySelector('tbody');
+      editor._draft.forEach((rule, index) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td><select data-rule-path>${paths.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></td><td><select data-rule-op>${operators.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></td><td><input data-rule-value type="text"></td><td><input data-rule-result type="checkbox" checked></td><td><button type="button" data-rule-remove>−</button></td>`;
+        row.querySelector('[data-rule-path]').value = rule.path || 'day';
+        row.querySelector('[data-rule-op]').value = rule.op || '>=';
+        row.querySelector('[data-rule-value]').value = rule.value ?? 0;
+        row.querySelector('[data-rule-result]').checked = rule.result !== false;
+        row.querySelector('[data-rule-path]').addEventListener('change', event => { rule.path = event.target.value; });
+        row.querySelector('[data-rule-op]').addEventListener('change', event => { rule.op = event.target.value; });
+        row.querySelector('[data-rule-value]').addEventListener('change', event => { rule.value = Number.isNaN(Number(event.target.value)) ? event.target.value : Number(event.target.value); });
+        row.querySelector('[data-rule-result]').addEventListener('change', event => { rule.result = event.target.checked; });
+        row.querySelector('[data-rule-remove]').addEventListener('click', () => { editor._draft.splice(index, 1); render(); });
+        body.appendChild(row);
+      });
+      editor.querySelector('[data-logic-add]').addEventListener('click', () => { editor._draft.push({ path: 'day', op: '>=', value: 50, result: false }); render(); });
+      editor.querySelector('[data-logic-save]').addEventListener('click', () => { settings.logicOverrides[key] = editor._draft; saveSettings(); editor.querySelector('[data-logic-status]').textContent = ' Saved'; });
+      editor.querySelector('[data-logic-clear]').addEventListener('click', () => { editor._draft = []; delete settings.logicOverrides[key]; saveSettings(); render(); });
+    };
+    render();
     editor.scrollIntoView({ block: 'nearest' });
   }
 
@@ -1645,6 +1655,10 @@
           #emberhold-automation [data-settings-text], #emberhold-automation [data-logic-text] { width: 100%; box-sizing: border-box; font: .8em monospace; }
           #emberhold-automation .ea-logic-editor { border-top: 1px solid currentColor; margin-top: .5rem; padding-top: .5rem; display: grid; gap: .35rem; }
           #emberhold-automation .ea-logic-help { opacity: .75; font-size: .85em; }
+          #emberhold-automation .ea-logic-table { width: 100%; border-collapse: collapse; font-size: .85em; }
+          #emberhold-automation .ea-logic-table th, #emberhold-automation .ea-logic-table td { padding: .2rem; text-align: left; }
+          #emberhold-automation .ea-logic-table select, #emberhold-automation .ea-logic-table input[type="text"] { width: 100%; min-width: 0; }
+          #emberhold-automation .ea-logic-actions { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
           #emberhold-automation .ea-import-status { opacity: .75; font-size: .85em; }
           #emberhold-automation .ea-settings { border-top: 1px solid currentColor; padding-top: .35rem; }
           #emberhold-automation .ea-settings > details { padding: .2rem 0; }
