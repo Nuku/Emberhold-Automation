@@ -303,7 +303,10 @@
     const rates = Object.fromEntries(Object.entries(rawRates)
       .map(([resource, rate]) => [resource, Number(rate)]));
     // Let the food planner use idle villagers and surplus producers first.
-    if (rates.food < 0 || (state.res.food || 0) <= 0.0001) return false;
+    // An empty stockpile is not itself a blocker: if net food is positive,
+    // moving an idle or surplus worker to morale duty does not worsen food
+    // production, and waiting here can leave morale permanently depressed.
+    if (rates.food < 0) return false;
 
     const partners = Array.isArray(state.tradePartners)
       ? (state.tradePartner && state.tradePartners[0] !== state.tradePartner

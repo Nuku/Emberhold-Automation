@@ -1105,7 +1105,7 @@ test('morale preserves upkeep and gives food shortages priority', () => {
   h.state.res.food = 0;
   h.api.helpers.production = () => ({ food: 1, wood: 10 });
   h.autoMorale(h.api.getState());
-  assert.deepEqual(h.calls, []);
+  assert.ok(h.state.jobs.performer > 1);
 });
 
 test('morale accounts for housing pressure and conquest, including Commonality', () => {
