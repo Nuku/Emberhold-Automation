@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.28
+// @version      1.30.29
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1480,6 +1480,25 @@
     return selectors.map(selector => document.querySelector(selector)).find(Boolean) || document.body;
   }
 
+  function gameSettingsHost() {
+    const selectors = ['#settings', '.settings', '[data-view="settings"]', '[data-tab="settings"]', 'main .settings'];
+    return selectors.map(selector => document.querySelector(selector)).find(Boolean) || null;
+  }
+
+  function moveDetailedSettings(panel) {
+    const detail = panel.querySelector('.ea-settings') || document.querySelector('#emberhold-automation-settings .ea-settings');
+    const host = gameSettingsHost();
+    if (!detail || !host || host === panel || host.contains(detail)) return;
+    let wrapper = document.getElementById('emberhold-automation-settings');
+    if (!wrapper) {
+      wrapper = document.createElement('section');
+      wrapper.id = 'emberhold-automation-settings';
+      wrapper.className = 'ea-embedded-panel';
+    }
+    wrapper.appendChild(detail);
+    host.appendChild(wrapper);
+  }
+
   function settingInput(key, label, type = 'checkbox') {
     if (type === 'select') {
       return `<label class="ea-setting"><span>${label}</span><select data-setting="${key}">
@@ -1778,6 +1797,7 @@
             #emberhold-automation .ea-grid, #emberhold-automation .ea-settings-grid { grid-template-columns: 1fr; }
           }
         `;
+        style.textContent = style.textContent.replaceAll('#emberhold-automation', '.ea-embedded-panel');
         document.head.appendChild(style);
       }
       panel = document.createElement('section');
@@ -1839,7 +1859,7 @@
             <span>Live status is shown above. Shift-click any control to configure conditional logic.</span>
           </div></details>
         </details>`;
-      host.prepend(panel);
+      host.appendChild(panel);
       wireSettingInputs(panel);
       wireUiDetails(panel);
       wireQueueControls(panel);
@@ -1863,8 +1883,12 @@
         };
         reader.readAsText(file);
       });
+      moveDetailedSettings(panel);
     } else if (panel.parentElement !== host) {
-      host.prepend(panel);
+      host.appendChild(panel);
+      moveDetailedSettings(panel);
+    } else {
+      moveDetailedSettings(panel);
     }
     return panel;
   }
