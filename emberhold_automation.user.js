@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.19
+// @version      1.30.20
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -332,6 +332,7 @@
       id !== 'performer' && !defs[id]?.targeted && defs[id]?.res &&
       !['food', 'knowledge'].includes(defs[id].res))
       .sort((a, b) => Number(state.jobs[b]) - Number(state.jobs[a]));
+    let releasedWorkers = 0;
     for (const id of donors) {
       if (missing <= 0) break;
       const count = jobCount(id);
@@ -344,9 +345,14 @@
       releaseWorkers(id, Math.min(surplus, missing));
       const released = count - jobCount(id);
       missing -= released;
+      releasedWorkers += released;
       rates[defs[id].res] -= released * rate;
     }
-    const additions = Math.min(target - performers, availableWorkers(snapshot()));
+    // A released worker is a transfer from an existing job, not an additional
+    // population slot. Include those releases even though the live unassigned
+    // count may still be zero until the performer assignment is applied.
+    const additions = Math.min(target - performers,
+      availableWorkers(snapshot()) + releasedWorkers);
     for (let i = 0; i < additions; i++) {
       if (!invoke('assignPerformer', 1)) break;
     }
@@ -1242,6 +1248,7 @@
     try {
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
+      let moraleChanged = false;
       for (const [setting, step] of [
         ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
@@ -1249,7 +1256,14 @@
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
-        if (settings[setting]) step(snapshot(), queuedDemand());
+        if (!settings[setting]) continue;
+        // autoJobs can immediately reclaim a villager that autoMorale just
+        // moved into performers (usually to satisfy a wood shortage). Let the
+        // targeted morale assignment settle for one tick before ordinary job
+        // balancing runs again.
+        if (step === autoJobs && moraleChanged) continue;
+        const changed = step(snapshot(), queuedDemand());
+        if (step === autoMorale && changed) moraleChanged = true;
       }
       if (lastAction === 'Scanning Emberhold') lastAction = 'No eligible action';
       updatePanel(snapshot());

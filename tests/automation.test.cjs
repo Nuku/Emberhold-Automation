@@ -1026,6 +1026,18 @@ test('morale assignments do not skip research for the tick', () => {
   assert.equal(h.state.jobs.performer, 1);
 });
 
+test('morale assignments are not reclaimed by ordinary job planning', () => {
+  const h = moraleHarness();
+  h.state.pop = 57;
+  h.state.jobs.woodcutter = 42;
+  h.api.helpers.production = () => ({ food: 4.21, wood: 18.9 });
+  h.action('setJob', (id, count) => { h.state.jobs[id] = count; });
+  h.action('assign', (id, delta) => { h.state.jobs[id] += delta; });
+  h.automationStep();
+  assert.ok(h.state.jobs.performer > 1);
+  assert.equal(h.state.jobs.woodcutter, 42 - (h.state.jobs.performer - 1));
+});
+
 function moraleHarness() {
   const h = harness();
   h.state.pop = 53;
