@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.30
+// @version      1.30.31
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1756,6 +1756,7 @@
 
   function makePanel() {
     const host = panelHost();
+    if (host !== document.body) host.classList.add('ea-scroll-host');
     let panel = document.getElementById('emberhold-automation');
     if (!panel) {
       if (!document.getElementById('emberhold-automation-style')) {
@@ -1763,6 +1764,7 @@
         style.id = 'emberhold-automation-style';
         style.textContent = `
           #emberhold-automation { margin: .75rem 0; width: 100%; box-sizing: border-box; }
+          .ea-scroll-host { overflow-y: auto !important; max-height: 100vh; }
           #emberhold-automation details { margin: .25rem 0; }
           #emberhold-automation summary { cursor: pointer; font-weight: 600; }
           #emberhold-automation .ea-body { display: grid; gap: .45rem; padding: .45rem 0; }
