@@ -621,6 +621,31 @@ test('combat increases force after consecutive successful attacks', () => {
   ]);
 });
 
+test('combat adds guards after consecutive failed attacks without raising difficulty', () => {
+  const h = harness();
+  h.settings.combat = true;
+  h.state.res = { food: 500, tools: 20 };
+  h.state.diplomacy = {
+    enemy: { hostile: true, conquered: false, knownEnemyAttack: 2,
+      enemyAttack: 2, espionageReduction: 40, maximumEspionageReduction: 40, spies: 1 },
+  };
+  h.api.helpers.guardLimits = () => ({ minimum: 1, maximum: 10, healthy: 10 });
+  h.api.helpers.predictSiege = () => ({ likelyWin: false });
+  h.api.helpers.predictAttack = (id, stage, count) =>
+    ({ likelyWin: id === 'enemy' && stage === 'breach' && count >= 2 });
+  h.action('attack', () => {
+    h.state.res.food -= 1;
+    return { ok: true, action: 'attack', succeeded: false };
+  });
+
+  h.autoCombat(h.api.getState());
+  h.autoCombat(h.api.getState());
+  h.autoCombat(h.api.getState());
+  assert.deepEqual(h.calls.map(call => call.slice(1)), [
+    ['enemy', 'breach', 2], ['enemy', 'breach', 3], ['enemy', 'breach', 4],
+  ]);
+});
+
 test('combat falls back to worst disposition and blocks diplomacy for declared enemies', () => {
   const h = harness();
   h.settings.combat = true;

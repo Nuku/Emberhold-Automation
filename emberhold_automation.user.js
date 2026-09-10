@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.26
+// @version      1.30.27
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -59,6 +59,7 @@
   let lastAction = 'Waiting for Emberhold';
   let lastInvocationResult;
   let combatSuccessStreak = 0;
+  let combatLossStreak = 0;
   const pausedDiplomats = Object.create(null);
   let uiSettings = loadUiSettings();
 
@@ -1027,11 +1028,19 @@
     }
     const result = action?.result;
     if (!result || (result.action !== 'attack' && result.action !== 'raid')) return;
-    if (result.ok && result.succeeded === true) combatSuccessStreak++;
-    else if (result.ok && result.succeeded === false) combatSuccessStreak = 0;
+    if (result.ok && result.succeeded === true) {
+      combatSuccessStreak++;
+      combatLossStreak = 0;
+    } else if (result.ok && result.succeeded === false) {
+      combatSuccessStreak = 0;
+      combatLossStreak++;
+    }
   }
 
   function escalatedAttackCount(count, limits) {
+    if (combatLossStreak > 0) {
+      return Math.min(limits.healthy, count + combatLossStreak);
+    }
     if (combatSuccessStreak < 2) return count;
     return Math.min(limits.healthy, count + combatSuccessStreak - 1);
   }
@@ -1512,6 +1521,80 @@
     return String(path || '').split('.').filter(Boolean).reduce((current, part) => current?.[part], value);
   }
 
+  const LOGIC_TYPES = {
+    Boolean: { label: 'Boolean', arg: 'boolean' },
+    String: { label: 'String', arg: 'text' },
+    Number: { label: 'Number', arg: 'number' },
+    GameDay: { label: 'Game Day', arg: 'none' },
+    Population: { label: 'Population', arg: 'none' },
+    Morale: { label: 'Morale', arg: 'none' },
+    SettingDefault: { label: 'Setting Default', arg: 'none' },
+    SettingCurrent: { label: 'Setting Current', arg: 'none' },
+    BuildingCount: { label: 'Building Count', arg: 'building' },
+    BuildingEnabled: { label: 'Building Enabled', arg: 'building' },
+    BuildingDisabled: { label: 'Building Disabled', arg: 'building' },
+    BuildingQueued: { label: 'Building Queued', arg: 'building' },
+    ResearchComplete: { label: 'Research Complete', arg: 'research' },
+    ResearchUnlocked: { label: 'Research Unlocked', arg: 'research' },
+    JobCount: { label: 'Job Count', arg: 'job' },
+    JobMax: { label: 'Job Max', arg: 'job' },
+    ResourceQuantity: { label: 'Resource Quantity', arg: 'resource' },
+    ResourceStorage: { label: 'Resource Storage', arg: 'resource' },
+    ResourceIncome: { label: 'Resource Income', arg: 'resource' },
+    ResourceRatio: { label: 'Resource Ratio', arg: 'resource' },
+    PowerGenerated: { label: 'Power Generated', arg: 'none' },
+    PowerUsed: { label: 'Power Used', arg: 'none' },
+    QueueCount: { label: 'Queue Count', arg: 'queue' },
+  };
+
+  const LOGIC_COMPARATORS = [
+    ['==', '=='], ['!=', '!='], ['>', '>'], ['<', '<'], ['>=', '>='], ['<=', '<='],
+    ['includes', 'includes'], ['exists', 'exists'],
+  ];
+
+  function logicTypeOptions() {
+    return Object.entries(LOGIC_TYPES).map(([id, type]) => `<option value="${id}">${type.label}</option>`).join('');
+  }
+
+  function logicArgumentOptions(kind) {
+    const defs = kind === 'building' ? definitions().BUILDINGS : kind === 'research' ? definitions().TECHS : kind === 'job' ? Object.values(definitions().JOBS || {}) : kind === 'resource' ? Object.values(definitions().RESOURCES || {}) : [];
+    if (kind === 'queue') return '<option value="build">Build queue</option><option value="research">Research queue</option><option value="expedition">Expedition queue</option>';
+    return (defs || []).map(def => `<option value="${def.id}">${def.name || def.id}</option>`).join('');
+  }
+
+  function logicArgumentControl(type, value) {
+    const arg = LOGIC_TYPES[type]?.arg;
+    if (arg === 'none') return '<span class="ea-logic-no-arg">—</span>';
+    if (arg === 'boolean') return `<select data-logic-arg><option value="true"${value !== false ? ' selected' : ''}>true</option><option value="false"${value === false ? ' selected' : ''}>false</option></select>`;
+    if (arg === 'text' || arg === 'number') return `<input data-logic-arg type="text" value="${String(value ?? '')}">`;
+    return `<select data-logic-arg>${logicArgumentOptions(arg)}</select>`;
+  }
+
+  function logicOperand(state, type, arg, settingKey) {
+    if (type === 'Boolean') return arg === true || arg === 'true';
+    if (type === 'String' || type === 'Number') return arg;
+    if (type === 'SettingDefault' || type === 'SettingCurrent') return settings[settingKey];
+    if (type === 'PowerGenerated') return Number(state?.power?.generated ?? 0);
+    if (type === 'PowerUsed') return Number(state?.power?.used ?? 0);
+    if (type === 'GameDay') return Number(state?.day ?? 0);
+    if (type === 'Population') return Number(state?.pop ?? 0);
+    if (type === 'Morale') return Number(state?.morale ?? 0);
+    if (type === 'QueueCount') return (state?.queues?.[arg] || []).length;
+    if (type === 'BuildingCount') return Number(state?.bld?.[arg] || 0);
+    if (type === 'BuildingQueued') return (state?.queues?.build || []).some(entry => entry.id === arg);
+    if (type === 'BuildingEnabled') return Number(state?.buildingPower?.[arg] || state?.power?.buildings?.[arg]?.enabled || 0);
+    if (type === 'BuildingDisabled') return Math.max(0, Number(state?.bld?.[arg] || 0) - Number(state?.buildingPower?.[arg] || 0));
+    if (type === 'ResearchComplete') return !!state?.techs?.[arg];
+    if (type === 'ResearchUnlocked') return !!queueDefinition('research', arg);
+    if (type === 'JobCount') return Number(state?.jobs?.[arg] || 0);
+    if (type === 'JobMax') return Number((definitions().JOBS?.[arg] || {}).max || 0);
+    if (type === 'ResourceQuantity') return Number(state?.res?.[arg] || 0);
+    if (type === 'ResourceStorage') return Number(state?.storage?.[arg] || state?.capacity?.[arg] || 0);
+    if (type === 'ResourceIncome') return Number(state?.rates?.[arg] || state?.production?.[arg] || 0);
+    if (type === 'ResourceRatio') return Number(state?.resRatio?.[arg] || 0);
+    return arg;
+  }
+
   function compareLogic(actual, op, expected) {
     if (op === 'exists') return actual !== undefined && actual !== null;
     if (op === '==') return actual == expected;
@@ -1527,7 +1610,10 @@
   function logicValue(key, state, fallback) {
     const rules = settings.logicOverrides?.[key];
     if (!Array.isArray(rules) || rules.length === 0) return fallback;
-    const match = rules.find(rule => compareLogic(readPath(state, rule.path), rule.op, rule.value));
+    const match = rules.find(rule => {
+      if (rule.path) return compareLogic(readPath(state, rule.path), rule.op, rule.value);
+      return compareLogic(logicOperand(state, rule.type1, rule.arg1, key), rule.cmp, logicOperand(state, rule.type2, rule.arg2, key));
+    });
     return match ? (match.result === undefined ? fallback : !!match.result) : fallback;
   }
 
@@ -1543,33 +1629,37 @@
       panel.querySelector('.ea-settings').appendChild(editor);
     }
     editor.dataset.logicKey = key;
-    editor._draft = JSON.parse(JSON.stringify(settings.logicOverrides?.[key] || []));
-    const paths = [
-      ['day', 'Game day'], ['pop', 'Population'], ['morale', 'Morale'],
-      ['power.generated', 'Power generated'], ['power.used', 'Power used'],
-      ['res.wood', 'Wood'], ['res.stone', 'Stone'], ['res.food', 'Food'],
-      ['res.knowledge', 'Knowledge'], ['res.tools', 'Tools'],
-      ['bld.factory', 'Factories'], ['bld.livingBlock', 'Living Blocks'],
-    ];
-    const operators = [['==', 'equals'], ['!=', 'does not equal'], ['>=', 'at least'], ['>', 'greater than'], ['<=', 'at most'], ['<', 'less than'], ['exists', 'exists'], ['includes', 'includes']];
+    const legacyType = path => path === 'day' ? 'GameDay' : path === 'pop' ? 'Population' : path === 'morale' ? 'Morale' : path === 'power.generated' ? 'PowerGenerated' : path === 'power.used' ? 'PowerUsed' : path.startsWith('bld.') ? 'BuildingCount' : path.startsWith('res.') ? 'ResourceQuantity' : 'String';
+    const legacyArg = path => path.includes('.') ? path.split('.')[1] : '';
+    editor._draft = JSON.parse(JSON.stringify(settings.logicOverrides?.[key] || [])).map(rule => rule.path
+      ? { type1: legacyType(rule.path), arg1: legacyArg(rule.path), type2: 'Number', arg2: rule.value, cmp: rule.op, result: rule.result }
+      : rule);
     const render = () => {
-      editor.innerHTML = `<strong>Conditional logic for <code>${key}</code></strong><div class="ea-logic-help">Rules are checked from top to bottom. The first matching rule determines the setting value.</div><table class="ea-logic-table"><thead><tr><th>Variable</th><th>Check</th><th>Value</th><th>Result</th><th></th></tr></thead><tbody></tbody></table><div class="ea-logic-actions"><button type="button" data-logic-add>Add rule</button> <button type="button" data-logic-save>Save</button> <button type="button" data-logic-clear>Clear</button><span data-logic-status></span></div>`;
+      editor.innerHTML = `<strong>Conditional logic for <code>${key}</code></strong><div class="ea-logic-help">Choose the value type first, then its argument, comparison, second value, and result. Rules are checked top to bottom; the first match wins.</div><table class="ea-logic-table"><thead><tr><th>Variable 1</th><th>Check</th><th>Variable 2</th><th>Result</th><th></th></tr></thead><tbody></tbody></table><div class="ea-logic-actions"><button type="button" data-logic-add>Add rule</button> <button type="button" data-logic-save>Save</button> <button type="button" data-logic-clear>Clear</button><span data-logic-status></span></div>`;
       const body = editor.querySelector('tbody');
       editor._draft.forEach((rule, index) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td><select data-rule-path>${paths.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></td><td><select data-rule-op>${operators.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></td><td><input data-rule-value type="text"></td><td><input data-rule-result type="checkbox" checked></td><td><button type="button" data-rule-remove>−</button></td>`;
-        row.querySelector('[data-rule-path]').value = rule.path || 'day';
-        row.querySelector('[data-rule-op]').value = rule.op || '>=';
-        row.querySelector('[data-rule-value]').value = rule.value ?? 0;
+        row.innerHTML = `<td><select data-rule-type>${logicTypeOptions()}</select><div data-rule-arg></div></td><td><select data-rule-cmp>${LOGIC_COMPARATORS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></td><td><select data-rule-type2>${logicTypeOptions()}</select><div data-rule-arg2></div></td><td><input data-rule-result type="checkbox" checked></td><td><button type="button" data-rule-remove>−</button></td>`;
+        row.querySelector('[data-rule-type]').value = rule.type1 || 'Number';
+        row.querySelector('[data-rule-type2]').value = rule.type2 || 'Number';
+        row.querySelector('[data-rule-cmp]').value = rule.cmp || '>=';
+        row.querySelector('[data-rule-arg]').innerHTML = logicArgumentControl(rule.type1 || 'Number', rule.arg1 ?? 0);
+        row.querySelector('[data-rule-arg2]').innerHTML = logicArgumentControl(rule.type2 || 'Number', rule.arg2 ?? 0);
+        const arg1 = row.querySelector('[data-rule-arg] [data-logic-arg]');
+        const arg2 = row.querySelector('[data-rule-arg2] [data-logic-arg]');
+        if (arg1) arg1.value = String(rule.arg1 ?? 0);
+        if (arg2) arg2.value = String(rule.arg2 ?? 0);
         row.querySelector('[data-rule-result]').checked = rule.result !== false;
-        row.querySelector('[data-rule-path]').addEventListener('change', event => { rule.path = event.target.value; });
-        row.querySelector('[data-rule-op]').addEventListener('change', event => { rule.op = event.target.value; });
-        row.querySelector('[data-rule-value]').addEventListener('change', event => { rule.value = Number.isNaN(Number(event.target.value)) ? event.target.value : Number(event.target.value); });
+        row.querySelector('[data-rule-type]').addEventListener('change', event => { rule.type1 = event.target.value; rule.arg1 = LOGIC_TYPES[event.target.value].arg === 'boolean' ? true : 0; render(); });
+        row.querySelector('[data-rule-type2]').addEventListener('change', event => { rule.type2 = event.target.value; rule.arg2 = LOGIC_TYPES[event.target.value].arg === 'boolean' ? true : 0; render(); });
+        row.querySelector('[data-rule-cmp]').addEventListener('change', event => { rule.cmp = event.target.value; });
+        row.querySelector('[data-rule-arg]').querySelector('[data-logic-arg]')?.addEventListener('change', event => { rule.arg1 = event.target.value; });
+        row.querySelector('[data-rule-arg2]').querySelector('[data-logic-arg]')?.addEventListener('change', event => { rule.arg2 = event.target.value; });
         row.querySelector('[data-rule-result]').addEventListener('change', event => { rule.result = event.target.checked; });
         row.querySelector('[data-rule-remove]').addEventListener('click', () => { editor._draft.splice(index, 1); render(); });
         body.appendChild(row);
       });
-      editor.querySelector('[data-logic-add]').addEventListener('click', () => { editor._draft.push({ path: 'day', op: '>=', value: 50, result: false }); render(); });
+      editor.querySelector('[data-logic-add]').addEventListener('click', () => { editor._draft.push({ type1: 'Number', arg1: 0, type2: 'Number', arg2: 50, cmp: '>=', result: false }); render(); });
       editor.querySelector('[data-logic-save]').addEventListener('click', () => { settings.logicOverrides[key] = editor._draft; saveSettings(); editor.querySelector('[data-logic-status]').textContent = ' Saved'; });
       editor.querySelector('[data-logic-clear]').addEventListener('click', () => { editor._draft = []; delete settings.logicOverrides[key]; saveSettings(); render(); });
     };
