@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.32
+// @version      1.30.33
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1489,8 +1489,15 @@
   }
 
   function gameSettingsHost() {
-    const chronicleHeading = Array.from(document.querySelectorAll('h1,h2,h3,h4,legend,div,section'))
-      .find(node => node.children.length === 0 && /^\s*chronicle tools\s*$/i.test(node.textContent || ''));
+    const settingsPanel = document.querySelector('#panel-settings');
+    if (settingsPanel) {
+      const chronicleTools = Array.from(settingsPanel.querySelectorAll('h2.section'))
+        .find(node => /^\s*chronicle tools\s*$/i.test(node.textContent || ''));
+      if (chronicleTools) return settingsPanel;
+    }
+    const chronicleHeading = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,legend,p,div,section,span'))
+      .filter(node => /^\s*chronicle tools\s*$/i.test(node.textContent || ''))
+      .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0];
     if (chronicleHeading) return chronicleHeading.closest('section, article') || chronicleHeading.parentElement;
 
     // Avoid generic `.settings` selectors: Emberhold also uses that name for
