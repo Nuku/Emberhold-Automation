@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.34
+// @version      1.30.35
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -62,6 +62,7 @@
   let combatLossStreak = 0;
   const pausedDiplomats = Object.create(null);
   let uiSettings = loadUiSettings();
+  let detailedSettingsNode = null;
 
   function loadSettings() {
     try {
@@ -1528,9 +1529,10 @@
   }
 
   function moveDetailedSettings(panel) {
-    const detail = panel.querySelector('.ea-settings') || document.querySelector('#emberhold-automation-settings .ea-settings');
+    const detail = panel.querySelector('.ea-settings') || detailedSettingsNode || document.querySelector('#emberhold-automation-settings .ea-settings');
     const host = gameSettingsHost();
     if (!detail || !host || host === panel || host.contains(detail)) return;
+    detailedSettingsNode = detail;
     let wrapper = document.getElementById('emberhold-automation-settings');
     if (!wrapper) {
       wrapper = document.createElement('section');
