@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.24
+// @version      1.30.25
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -29,6 +29,28 @@
     wonderStart: false,
     wonderHandle: false,
     interval: 1000,
+    logicOverrides: {},
+    ownBuildQueue: [],
+    ownResearchQueue: [],
+  };
+
+  const UI_DEFAULTS = {
+    panelCollapsed: false,
+    settingsCollapsed: true,
+    categoryCollapsed: {
+      core: false,
+      queues: true,
+      jobs: true,
+      research: true,
+      buildings: true,
+      production: true,
+      power: true,
+      diplomacy: true,
+      expeditions: true,
+      combat: true,
+      wonders: true,
+      diagnostics: true,
+    },
   };
 
   let settings = loadSettings();
@@ -38,6 +60,7 @@
   let lastInvocationResult;
   let combatSuccessStreak = 0;
   const pausedDiplomats = Object.create(null);
+  let uiSettings = loadUiSettings();
 
   function loadSettings() {
     try {
@@ -49,6 +72,56 @@
 
   function saveSettings() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  function exportSettings() {
+    return JSON.stringify(settings, null, 2);
+  }
+
+  function importSettings(text) {
+    let imported;
+    try {
+      imported = JSON.parse(text);
+      if (!imported || Array.isArray(imported) || typeof imported !== 'object') throw new Error('Settings must be a JSON object');
+    } catch (error) {
+      return `Import failed: ${error.message}`;
+    }
+    settings = { ...DEFAULTS, ...imported, logicOverrides: imported.logicOverrides || {} };
+    saveSettings();
+    restart();
+    const panel = document.getElementById('emberhold-automation');
+    if (panel) refreshSettingInputs(panel);
+    return 'Settings imported';
+  }
+
+  function downloadSettings() {
+    const blob = new Blob([exportSettings()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'emberhold-automation-settings.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function loadUiSettings() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(`${SETTINGS_KEY}_ui`) || '{}');
+      return {
+        ...UI_DEFAULTS,
+        ...stored,
+        categoryCollapsed: { ...UI_DEFAULTS.categoryCollapsed, ...(stored.categoryCollapsed || {}) },
+      };
+    } catch (_) {
+      return {
+        ...UI_DEFAULTS,
+        categoryCollapsed: { ...UI_DEFAULTS.categoryCollapsed },
+      };
+    }
+  }
+
+  function saveUiSettings() {
+    localStorage.setItem(`${SETTINGS_KEY}_ui`, JSON.stringify(uiSettings));
   }
 
   function api() {
@@ -98,12 +171,13 @@
   }
 
   function queuedDemand(state = snapshot()) {
-    if (!state?.settings?.strictQueueOrder) return api().helpers?.queueDemand?.() || {};
+    const demand = !state?.settings?.strictQueueOrder ? (api().helpers?.queueDemand?.() || {}) : {};
+    if (!state?.settings?.strictQueueOrder) return mergeDemand(demand, ownQueueDemand(state));
 
     // In strict mode the game only considers the first entry in each queue.
     // Do not reserve resources for later entries: doing so can prevent the
     // active entry from ever becoming affordable.
-    const demand = {};
+    const gameDemand = {};
     const definitionsByType = {
       build: definitions().BUILDINGS || [],
       research: definitions().TECHS || [],
@@ -119,10 +193,51 @@
           ? (def ? researchCost(def) : entry.cost)
           : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost;
       for (const [resource, amount] of Object.entries(cost || {})) {
+        gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+      }
+    }
+    return mergeDemand(gameDemand, ownQueueDemand(state));
+  }
+
+  function mergeDemand(first, second) {
+    const merged = { ...(first || {}) };
+    for (const [id, amount] of Object.entries(second || {})) merged[id] = (merged[id] || 0) + amount;
+    return merged;
+  }
+
+  function queueDefinition(type, id) {
+    const list = type === 'build' ? definitions().BUILDINGS : definitions().TECHS;
+    return (list || []).find(def => def.id === id);
+  }
+
+  function ownQueueDemand(state) {
+    const demand = {};
+    for (const [type, queue] of [['build', settings.ownBuildQueue], ['research', settings.ownResearchQueue]]) {
+      const id = Array.isArray(queue) ? queue[0] : null;
+      const def = id && queueDefinition(type, id);
+      if (!def) continue;
+      const cost = type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        : researchCost(def);
+      for (const [resource, amount] of Object.entries(cost || {})) {
         demand[resource] = (demand[resource] || 0) + amount;
       }
     }
     return demand;
+  }
+
+  function demandForOwnAction(type, state, demand) {
+    const id = type === 'build' ? settings.ownBuildQueue?.[0] : settings.ownResearchQueue?.[0];
+    const def = id && queueDefinition(type, id);
+    if (!def) return demand;
+    const cost = type === 'build'
+      ? (api().helpers?.buildingCost?.(def) || def.cost)
+      : researchCost(def);
+    const result = { ...(demand || {}) };
+    for (const [resource, amount] of Object.entries(cost || {})) {
+      result[resource] = Math.max(0, (result[resource] || 0) - amount);
+    }
+    return result;
   }
 
   function unlocked(def, state) {
@@ -660,6 +775,29 @@
         if (invoke('research', id)) return;
       }
     }
+  }
+
+  function autoOwnQueue(type, state, demand) {
+    const key = type === 'build' ? 'ownBuildQueue' : 'ownResearchQueue';
+    const action = type === 'build' ? 'build' : 'research';
+    const queue = settings[key];
+    if (!Array.isArray(queue) || !queue.length) return false;
+    const id = queue[0];
+    const def = queueDefinition(type, id);
+    if (!def) return false;
+    const finished = type === 'build'
+      ? Number(state.bld?.[id] || 0) >= Number(def.max || 1)
+      : !!state.techs?.[id];
+    if (finished) {
+      settings[key] = queue.slice(1);
+      saveSettings();
+      return true;
+    }
+    if ((state.queues?.[type] || []).some(entry => entry.id === id)) return false;
+    const cost = type === 'build'
+      ? (api().helpers?.buildingCost?.(def) || def.cost)
+      : researchCost(def);
+    return unlocked(def, state) && affordable(cost, state, demandForOwnAction(type, state, demand)) && invoke(action, id);
   }
 
   // Keep the legacy reserve for older API snapshots. Newer snapshots expose
@@ -1290,17 +1428,22 @@
     if (busy || !settings.enabled || !api()?.getState) return;
     busy = true;
     try {
+      // Emberhold may redraw its panels; remount the embedded controls if the
+      // host panel was replaced during a tab or view change.
+      makePanel();
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
       let moraleChanged = false;
       for (const [setting, step] of [
+        ['buildings', state => autoOwnQueue('build', state, queuedDemand(state))],
+        ['research', state => autoOwnQueue('research', state, queuedDemand(state))],
         ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
-        if (!settings[setting]) continue;
+        if (!settings[setting] || !logicAllows(setting, snapshot())) continue;
         // autoJobs can immediately reclaim a villager that autoMorale just
         // moved into performers (usually to satisfy a wood shortage). Let the
         // targeted morale assignment settle for one tick before ordinary job
@@ -1320,27 +1463,26 @@
     }
   }
 
-  function makePanel() {
-    if (document.getElementById('emberhold-automation')) return;
-    const panel = document.createElement('details');
-    panel.id = 'emberhold-automation';
-    panel.open = true;
-    panel.innerHTML = `<summary>Emberhold Automation</summary>
-      <div class="ea-body"><label><input data-setting="enabled" type="checkbox"> Enabled</label>
-      <div class="ea-grid">${[
-        ['jobs', 'Jobs'], ['research', 'Research'], ['buildings', 'Buildings'],
-        ['crafting', 'Crafting'], ['diplomacy', 'Diplomacy'],
-        ['combat', 'Combat'],
-        ['expeditions', 'Expeditions'], ['power', 'Power'],
-        ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
-      ].map(([id, label]) => `<label><input data-setting="${id}" type="checkbox"> ${label}</label>`).join('')}</div>
-      <label>Loop delay <select data-setting="interval"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option><option value="5000">5s</option></select></label>
-      <div class="ea-status" data-status>Waiting for Emberhold</div></div>`;
-    document.body.appendChild(panel);
-    const style = document.createElement('style');
-    style.textContent = '#emberhold-automation{position:fixed;right:1rem;bottom:1rem;z-index:2147483647!important;background:#211810;color:#f2d49a;border:1px solid #8d6739;padding:.55rem;max-width:18rem;font:13px sans-serif;box-shadow:0 4px 18px #0008}#emberhold-automation summary{cursor:pointer;font-weight:bold}.ea-body{display:grid;gap:.45rem;padding-top:.5rem}.ea-grid{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .7rem}.ea-status{color:#c9a86b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
-    document.head.appendChild(style);
-    panel.querySelectorAll('[data-setting]').forEach(input => {
+  function panelHost() {
+    const selectors = [
+      '#resources', '#left-panel', '#leftPanel', '#sidebar', '#game-sidebar',
+      'aside', 'main', '[role="main"]', '#app', '#game',
+    ];
+    return selectors.map(selector => document.querySelector(selector)).find(Boolean) || document.body;
+  }
+
+  function settingInput(key, label, type = 'checkbox') {
+    if (type === 'select') {
+      return `<label class="ea-setting"><span>${label}</span><select data-setting="${key}">
+        <option value="500">0.5s</option><option value="1000">1s</option>
+        <option value="2000">2s</option><option value="5000">5s</option>
+      </select></label>`;
+    }
+    return `<label class="ea-setting" title="Shift-click to add conditional logic"><input data-setting="${key}" type="${type}"> <span>${label}</span></label>`;
+  }
+
+  function wireSettingInputs(root) {
+    root.querySelectorAll('[data-setting]').forEach(input => {
       const key = input.dataset.setting;
       if (input.type === 'checkbox') input.checked = !!settings[key];
       else input.value = String(settings[key]);
@@ -1349,7 +1491,257 @@
         saveSettings();
         restart();
       });
+      input.addEventListener('click', event => {
+        if (event.shiftKey) {
+          event.preventDefault();
+          openLogicEditor(key, root.closest('#emberhold-automation'));
+        }
+      });
     });
+  }
+
+  function refreshSettingInputs(root) {
+    root.querySelectorAll('[data-setting]').forEach(input => {
+      const value = settings[input.dataset.setting];
+      if (input.type === 'checkbox') input.checked = !!value;
+      else input.value = String(value);
+    });
+  }
+
+  function readPath(value, path) {
+    return String(path || '').split('.').filter(Boolean).reduce((current, part) => current?.[part], value);
+  }
+
+  function compareLogic(actual, op, expected) {
+    if (op === 'exists') return actual !== undefined && actual !== null;
+    if (op === '==') return actual == expected;
+    if (op === '!=') return actual != expected;
+    if (op === '>') return Number(actual) > Number(expected);
+    if (op === '>=') return Number(actual) >= Number(expected);
+    if (op === '<') return Number(actual) < Number(expected);
+    if (op === '<=') return Number(actual) <= Number(expected);
+    if (op === 'includes') return Array.isArray(actual) ? actual.includes(expected) : String(actual ?? '').includes(String(expected));
+    return false;
+  }
+
+  function logicAllows(key, state) {
+    const rules = settings.logicOverrides?.[key];
+    if (!Array.isArray(rules) || rules.length === 0) return true;
+    return rules.every(rule => compareLogic(readPath(state, rule.path), rule.op, rule.value));
+  }
+
+  function openLogicEditor(key, panel) {
+    if (!panel) return;
+    const settingsDetail = panel.querySelector('[data-ui-detail="settings"]');
+    if (settingsDetail) settingsDetail.open = true;
+    let editor = panel.querySelector('#ea-logic-editor');
+    if (!editor) {
+      editor = document.createElement('div');
+      editor.id = 'ea-logic-editor';
+      editor.className = 'ea-logic-editor';
+      editor.innerHTML = `<strong>Conditional logic</strong><div class="ea-logic-help">Shift-clicked setting: <code data-logic-key></code><br>Use JSON rules with state paths, for example <code>[{"path":"day","op":">=","value":50}]</code>.</div><textarea data-logic-text rows="5" spellcheck="false"></textarea><div><button type="button" data-logic-save>Save logic</button> <button type="button" data-logic-clear>Clear</button><span data-logic-status></span></div>`;
+      panel.querySelector('.ea-settings').appendChild(editor);
+      editor.querySelector('[data-logic-save]').addEventListener('click', () => {
+        const target = editor.dataset.logicKey;
+        try {
+          const parsed = JSON.parse(editor.querySelector('[data-logic-text]').value || '[]');
+          if (!Array.isArray(parsed) || parsed.some(rule => !rule.path || !rule.op)) throw new Error('Expected an array of rules with path and op');
+          settings.logicOverrides[target] = parsed;
+          saveSettings();
+          editor.querySelector('[data-logic-status]').textContent = ' Saved';
+        } catch (error) {
+          editor.querySelector('[data-logic-status]').textContent = ` ${error.message}`;
+        }
+      });
+      editor.querySelector('[data-logic-clear]').addEventListener('click', () => {
+        delete settings.logicOverrides[editor.dataset.logicKey];
+        saveSettings();
+        editor.querySelector('[data-logic-text]').value = '[]';
+        editor.querySelector('[data-logic-status]').textContent = ' Cleared';
+      });
+    }
+    editor.dataset.logicKey = key;
+    editor.querySelector('[data-logic-key]').textContent = key;
+    editor.querySelector('[data-logic-text]').value = JSON.stringify(settings.logicOverrides?.[key] || [], null, 2);
+    editor.querySelector('[data-logic-status]').textContent = '';
+    editor.scrollIntoView({ block: 'nearest' });
+  }
+
+  function wireUiDetails(root) {
+    root.querySelectorAll('[data-ui-detail]').forEach(detail => {
+      const key = detail.dataset.uiDetail;
+      detail.open = key === 'panel' ? !uiSettings.panelCollapsed : !uiSettings.settingsCollapsed;
+      detail.addEventListener('toggle', () => {
+        if (key === 'panel') uiSettings.panelCollapsed = !detail.open;
+        else uiSettings.settingsCollapsed = !detail.open;
+        saveUiSettings();
+      });
+    });
+    root.querySelectorAll('[data-ui-category]').forEach(detail => {
+      const key = detail.dataset.uiCategory;
+      detail.open = !uiSettings.categoryCollapsed[key];
+      detail.addEventListener('toggle', () => {
+        uiSettings.categoryCollapsed[key] = !detail.open;
+        saveUiSettings();
+      });
+    });
+  }
+
+  function queueOptions(type) {
+    const defs = type === 'build' ? definitions().BUILDINGS : definitions().TECHS;
+    return (defs || []).map(def => `<option value="${def.id}">${def.name || def.id}</option>`).join('');
+  }
+
+  function refreshQueueList(panel, type) {
+    const key = type === 'build' ? 'ownBuildQueue' : 'ownResearchQueue';
+    const list = panel.querySelector(`[data-queue-list="${type}"]`);
+    list.innerHTML = (settings[key] || []).map((id, index) =>
+      `<span class="ea-queue-item"><span>${index + 1}. ${id}</span><button type="button" data-queue-remove="${type}" data-queue-index="${index}">×</button></span>`).join('');
+    list.querySelectorAll('[data-queue-remove]').forEach(button => button.addEventListener('click', () => {
+      settings[key].splice(Number(button.dataset.queueIndex), 1);
+      saveSettings();
+      refreshQueueList(panel, type);
+    }));
+  }
+
+  function wireQueueControls(panel) {
+    for (const type of ['build', 'research']) {
+      panel.querySelector(`[data-queue-add="${type}"]`).addEventListener('click', () => {
+        const select = panel.querySelector(`[data-queue-select="${type}"]`);
+        const key = type === 'build' ? 'ownBuildQueue' : 'ownResearchQueue';
+        if (!select.value) return;
+        settings[key] = Array.isArray(settings[key]) ? settings[key] : [];
+        settings[key].push(select.value);
+        saveSettings();
+        refreshQueueList(panel, type);
+      });
+      refreshQueueList(panel, type);
+    }
+  }
+
+  function makePanel() {
+    const host = panelHost();
+    let panel = document.getElementById('emberhold-automation');
+    if (!panel) {
+      if (!document.getElementById('emberhold-automation-style')) {
+        const style = document.createElement('style');
+        style.id = 'emberhold-automation-style';
+        style.textContent = `
+          #emberhold-automation { margin: .75rem 0; width: 100%; box-sizing: border-box; }
+          #emberhold-automation details { margin: .25rem 0; }
+          #emberhold-automation summary { cursor: pointer; font-weight: 600; }
+          #emberhold-automation .ea-body { display: grid; gap: .45rem; padding: .45rem 0; }
+          #emberhold-automation .ea-grid, #emberhold-automation .ea-settings-grid {
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3rem .7rem;
+          }
+          #emberhold-automation .ea-setting { display: flex; align-items: center; gap: .3rem; }
+          #emberhold-automation .ea-setting span { min-width: 0; }
+          #emberhold-automation select { max-width: 6rem; }
+          #emberhold-automation .ea-settings-actions, #emberhold-automation [data-settings-text], #emberhold-automation .ea-import-status { grid-column: 1 / -1; }
+          #emberhold-automation .ea-settings-actions { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+          #emberhold-automation .ea-queue-settings { display: grid; gap: .35rem; padding: .35rem 0; }
+          #emberhold-automation .ea-queue-settings label { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+          #emberhold-automation .ea-queue-item { display: flex; justify-content: space-between; gap: .5rem; padding-left: .75rem; }
+          #emberhold-automation [data-settings-text], #emberhold-automation [data-logic-text] { width: 100%; box-sizing: border-box; font: .8em monospace; }
+          #emberhold-automation .ea-logic-editor { border-top: 1px solid currentColor; margin-top: .5rem; padding-top: .5rem; display: grid; gap: .35rem; }
+          #emberhold-automation .ea-logic-help { opacity: .75; font-size: .85em; }
+          #emberhold-automation .ea-import-status { opacity: .75; font-size: .85em; }
+          #emberhold-automation .ea-settings { border-top: 1px solid currentColor; padding-top: .35rem; }
+          #emberhold-automation .ea-settings > details { padding: .2rem 0; }
+          #emberhold-automation .ea-status { opacity: .75; font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          @media (max-width: 520px) {
+            #emberhold-automation .ea-grid, #emberhold-automation .ea-settings-grid { grid-template-columns: 1fr; }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+      panel = document.createElement('section');
+      panel.id = 'emberhold-automation';
+      panel.className = 'ea-embedded-panel';
+      panel.innerHTML = `<details data-ui-detail="panel"><summary>Emberhold Automation</summary>
+        <div class="ea-body">
+          <div class="ea-grid">${[
+            ['enabled', 'Enabled'], ['jobs', 'Jobs'], ['research', 'Research'],
+            ['buildings', 'Buildings'], ['crafting', 'Crafting'], ['power', 'Power'],
+            ['diplomacy', 'Diplomacy'], ['expeditions', 'Expeditions'],
+            ['combat', 'Combat'], ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
+          ].map(([id, label]) => settingInput(id, label)).join('')}</div>
+          <div class="ea-status" data-status>Waiting for Emberhold</div>
+        </div></details>
+        <details data-ui-detail="settings" class="ea-settings"><summary>More settings</summary>
+          <details data-ui-category="queues"><summary>Personal queues</summary><div class="ea-queue-settings">
+            <label>Build queue <select data-queue-select="build"><option value="">Choose a building…</option>${queueOptions('build')}</select><button type="button" data-queue-add="build">Add</button></label>
+            <div data-queue-list="build"></div>
+            <label>Research queue <select data-queue-select="research"><option value="">Choose research…</option>${queueOptions('research')}</select><button type="button" data-queue-add="research">Add</button></label>
+            <div data-queue-list="research"></div>
+            <small>These queues reserve their next item’s ingredients and submit it when affordable. They do not replace Emberhold’s native queues.</small>
+          </div></details>
+          <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
+            ${settingInput('interval', 'Loop delay', 'select')}
+            <div class="ea-settings-actions"><button type="button" data-export>Export text</button><button type="button" data-download>Save file</button><button type="button" data-import>Import text</button><input type="file" data-import-file accept=".json,application/json"></div>
+            <textarea data-settings-text rows="6" spellcheck="false" placeholder="Paste exported settings JSON here"></textarea><span class="ea-import-status" data-import-status></span>
+          </div></details>
+          <details data-ui-category="jobs"><summary>Jobs</summary><div class="ea-settings-grid">
+            ${settingInput('jobs', 'Automatic job assignment')}
+          </div></details>
+          <details data-ui-category="research"><summary>Research</summary><div class="ea-settings-grid">
+            ${settingInput('research', 'Automatic research')}
+          </div></details>
+          <details data-ui-category="buildings"><summary>Buildings</summary><div class="ea-settings-grid">
+            ${settingInput('buildings', 'Automatic construction')}
+          </div></details>
+          <details data-ui-category="production"><summary>Production</summary><div class="ea-settings-grid">
+            ${settingInput('crafting', 'Automatic crafting')}
+          </div></details>
+          <details data-ui-category="power"><summary>Power</summary><div class="ea-settings-grid">
+            ${settingInput('power', 'Automatic power allocation')}
+          </div></details>
+          <details data-ui-category="diplomacy"><summary>Diplomacy</summary><div class="ea-settings-grid">
+            ${settingInput('diplomacy', 'Automatic diplomacy requests')}
+          </div></details>
+          <details data-ui-category="expeditions"><summary>Expeditions</summary><div class="ea-settings-grid">
+            ${settingInput('expeditions', 'Automatic expeditions')}
+          </div></details>
+          <details data-ui-category="combat"><summary>Combat</summary><div class="ea-settings-grid">
+            ${settingInput('combat', 'Automatic combat', 'checkbox')}
+            <small>Combat is disabled by default because it can commit troops and initiate attacks.</small>
+          </div></details>
+          <details data-ui-category="wonders"><summary>Wonders</summary><div class="ea-settings-grid">
+            ${settingInput('wonderStart', 'Start wonders')}${settingInput('wonderHandle', 'Handle wonders')}
+            <small>The final Wonder fate remains manual.</small>
+          </div></details>
+          <details data-ui-category="diagnostics"><summary>Diagnostics</summary><div class="ea-settings-grid">
+            <span>Live status is shown above. Shift-click any control to configure conditional logic.</span>
+          </div></details>
+        </details>`;
+      host.prepend(panel);
+      wireSettingInputs(panel);
+      wireUiDetails(panel);
+      wireQueueControls(panel);
+      const text = panel.querySelector('[data-settings-text]');
+      panel.querySelector('[data-export]').addEventListener('click', () => {
+        text.value = exportSettings();
+        text.select();
+        navigator.clipboard?.writeText(text.value).catch(() => {});
+      });
+      panel.querySelector('[data-download]').addEventListener('click', downloadSettings);
+      panel.querySelector('[data-import]').addEventListener('click', () => {
+        panel.querySelector('[data-import-status]').textContent = importSettings(text.value);
+      });
+      panel.querySelector('[data-import-file]').addEventListener('change', event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          text.value = String(reader.result || '');
+          panel.querySelector('[data-import-status]').textContent = importSettings(text.value);
+        };
+        reader.readAsText(file);
+      });
+    } else if (panel.parentElement !== host) {
+      host.prepend(panel);
+    }
+    return panel;
   }
 
   function updatePanel(state) {
