@@ -1619,14 +1619,23 @@
 
   function openLogicEditor(key, panel) {
     if (!panel) return;
-    const settingsDetail = panel.querySelector('[data-ui-detail="settings"]');
-    if (settingsDetail) settingsDetail.open = true;
-    let editor = panel.querySelector('#ea-logic-editor');
+    let modal = document.getElementById('ea-settings-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'ea-settings-modal';
+      modal.innerHTML = `<div class="ea-modal-content"><button type="button" class="ea-modal-close" aria-label="Close">×</button><div class="ea-modal-header" data-modal-title></div><div class="ea-modal-body"><div id="ea-logic-editor" class="ea-logic-editor"></div></div></div>`;
+      document.body.appendChild(modal);
+      modal.querySelector('.ea-modal-close').addEventListener('click', () => { modal.hidden = true; });
+      modal.addEventListener('click', event => { if (event.target === modal) modal.hidden = true; });
+      document.addEventListener('keydown', event => { if (event.key === 'Escape' && !modal.hidden) modal.hidden = true; });
+    }
+    modal.hidden = false;
+    modal.querySelector('[data-modal-title]').textContent = `Conditional logic · ${key}`;
+    let editor = modal.querySelector('#ea-logic-editor');
     if (!editor) {
       editor = document.createElement('div');
       editor.id = 'ea-logic-editor';
       editor.className = 'ea-logic-editor';
-      panel.querySelector('.ea-settings').appendChild(editor);
     }
     editor.dataset.logicKey = key;
     const legacyType = path => path === 'day' ? 'GameDay' : path === 'pop' ? 'Population' : path === 'morale' ? 'Morale' : path === 'power.generated' ? 'PowerGenerated' : path === 'power.used' ? 'PowerUsed' : path.startsWith('bld.') ? 'BuildingCount' : path.startsWith('res.') ? 'ResourceQuantity' : 'String';
@@ -1749,6 +1758,18 @@
           #emberhold-automation .ea-logic-table th, #emberhold-automation .ea-logic-table td { padding: .2rem; text-align: left; }
           #emberhold-automation .ea-logic-table select, #emberhold-automation .ea-logic-table input[type="text"] { width: 100%; min-width: 0; }
           #emberhold-automation .ea-logic-actions { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+          #ea-settings-modal { position: fixed; inset: 0; z-index: 2147483646; background: rgba(10, 10, 10, .86); overflow-y: auto; }
+          #ea-settings-modal[hidden] { display: none; }
+          #ea-settings-modal .ea-modal-content { position: relative; width: min(1100px, 92vw); min-height: 240px; margin: 5vh auto; padding: 0 1rem 1rem; box-sizing: border-box; border-radius: .5rem; background: inherit; color: inherit; }
+          #ea-settings-modal .ea-modal-header { padding: .7rem 2.5rem .7rem 1rem; border-bottom: 1px solid currentColor; font-weight: 700; text-align: center; }
+          #ea-settings-modal .ea-modal-body { padding: 1rem; overflow-x: auto; }
+          #ea-settings-modal .ea-modal-close { position: absolute; top: .35rem; right: .65rem; border: 0; background: transparent; color: inherit; font-size: 1.8rem; line-height: 1; cursor: pointer; }
+          #ea-settings-modal .ea-logic-editor { border-top: 0; margin-top: 0; padding-top: 0; }
+          #ea-settings-modal .ea-logic-table { table-layout: fixed; }
+          #ea-settings-modal .ea-logic-table th:nth-child(1), #ea-settings-modal .ea-logic-table td:nth-child(1), #ea-settings-modal .ea-logic-table th:nth-child(3), #ea-settings-modal .ea-logic-table td:nth-child(3) { width: 34%; }
+          #ea-settings-modal .ea-logic-table th:nth-child(2), #ea-settings-modal .ea-logic-table td:nth-child(2) { width: 13%; }
+          #ea-settings-modal .ea-logic-table th:nth-child(4), #ea-settings-modal .ea-logic-table td:nth-child(4) { width: 8%; text-align: center; }
+          @media (max-width: 700px) { #ea-settings-modal .ea-modal-content { width: 98vw; margin-top: 1vh; } #ea-settings-modal .ea-modal-body { padding: .5rem 0; } }
           #emberhold-automation .ea-import-status { opacity: .75; font-size: .85em; }
           #emberhold-automation .ea-settings { border-top: 1px solid currentColor; padding-top: .35rem; }
           #emberhold-automation .ea-settings > details { padding: .2rem 0; }
