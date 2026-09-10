@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.33
+// @version      1.30.34
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1520,6 +1520,13 @@
     }
   }
 
+  function watchGamePanels() {
+    if (typeof MutationObserver === 'undefined' || !document.body || document.body.dataset.eaObserved) return;
+    document.body.dataset.eaObserved = 'true';
+    const observer = new MutationObserver(() => makePanel());
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   function moveDetailedSettings(panel) {
     const detail = panel.querySelector('.ea-settings') || document.querySelector('#emberhold-automation-settings .ea-settings');
     const host = gameSettingsHost();
@@ -1925,7 +1932,7 @@
       });
       moveDetailedSettings(panel);
       makeSidebarScrollable(host);
-    } else if (panel.parentElement !== host) {
+    } else if (panel.parentElement !== host && host !== document.body) {
       host.appendChild(panel);
       moveDetailedSettings(panel);
       makeSidebarScrollable(host);
@@ -1956,6 +1963,7 @@
   function boot() {
     if (typeof api()?.getState !== 'function') return setTimeout(boot, 250);
     lastAction = api().actions ? 'Connected to Emberhold' : api().action ? 'Connected (legacy API)' : 'State API only — actions unavailable';
+    watchGamePanels();
     makePanel();
     if (typeof api().subscribe === 'function') api().subscribe(updatePanel);
     restart();
