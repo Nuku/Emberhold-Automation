@@ -1500,6 +1500,19 @@
       .find(node => node && !['BUTTON', 'A'].includes(node.tagName)) || null;
   }
 
+  function makeSidebarScrollable(host) {
+    let node = host;
+    for (let depth = 0; node && node !== document.body && depth < 5; depth++, node = node.parentElement) {
+      const style = window.getComputedStyle?.(node);
+      const clipped = style && ['hidden', 'clip'].includes(style.overflowY);
+      if (clipped || node.scrollHeight > node.clientHeight) {
+        node.classList.add('ea-scroll-host');
+        node.style.overflowY = 'auto';
+        node.style.maxHeight = `calc(100vh - ${Math.max(8, Math.round(node.getBoundingClientRect().top))}px)`;
+      }
+    }
+  }
+
   function moveDetailedSettings(panel) {
     const detail = panel.querySelector('.ea-settings') || document.querySelector('#emberhold-automation-settings .ea-settings');
     const host = gameSettingsHost();
@@ -1764,7 +1777,10 @@
 
   function makePanel() {
     const host = panelHost();
-    if (host !== document.body) host.classList.add('ea-scroll-host');
+    if (host !== document.body) {
+      host.classList.add('ea-scroll-host');
+      makeSidebarScrollable(host);
+    }
     let panel = document.getElementById('emberhold-automation');
     if (!panel) {
       if (!document.getElementById('emberhold-automation-style')) {
@@ -1901,11 +1917,14 @@
         reader.readAsText(file);
       });
       moveDetailedSettings(panel);
+      makeSidebarScrollable(host);
     } else if (panel.parentElement !== host) {
       host.appendChild(panel);
       moveDetailedSettings(panel);
+      makeSidebarScrollable(host);
     } else {
       moveDetailedSettings(panel);
+      makeSidebarScrollable(host);
     }
     return panel;
   }
