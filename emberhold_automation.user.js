@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.36
+// @version      1.30.38
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -26,6 +26,7 @@
     diplomacy: true,
     combat: false,
     expeditions: true,
+    migration: false,
     wonderStart: false,
     wonderHandle: false,
     interval: 1000,
@@ -47,6 +48,7 @@
       power: true,
       diplomacy: true,
       expeditions: true,
+      migration: true,
       combat: true,
       wonders: true,
       diagnostics: true,
@@ -973,6 +975,23 @@
     }
   }
 
+  function autoMigration(state, demand) {
+    // Migration is deliberately opt-in. Once the player has declared it,
+    // commit one affordable preparation tranche at a time, but leave the
+    // irreversible declaration and departure actions manual.
+    if (!state?.migrating || !state.migrationPreparation ||
+        !(api().actions?.migrationPrepare || api().action)) return;
+    const projects = definitions().RESOURCE_PROJECTS || [];
+    for (const project of projects) {
+      const progress = Math.max(0, Math.min(100, Number(state.projects?.[project.id]) || 0));
+      const total = Number(project.total);
+      if (!project.id || !project.resource || progress >= 100 || !Number.isFinite(total) || total <= 0) continue;
+      const partCost = total / 100;
+      if (Math.max(0, Number(state.res?.[project.resource] || 0) - Number(demand?.[project.resource] || 0)) < partCost) continue;
+      if (invoke('migrationPrepare', project.id)) return;
+    }
+  }
+
   function combatContacts(state) {
     const contacts = state?.diplomacy && typeof state.diplomacy === 'object'
       ? Object.entries(state.diplomacy).map(([id, entry]) => [id, entry || {}]) : [];
@@ -1475,6 +1494,7 @@
         ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
+        ['migration', autoMigration],
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
@@ -1875,7 +1895,7 @@
             ['enabled', 'Enabled'], ['jobs', 'Jobs'], ['research', 'Research'],
             ['buildings', 'Buildings'], ['crafting', 'Crafting'], ['power', 'Power'],
             ['diplomacy', 'Diplomacy'], ['expeditions', 'Expeditions'],
-            ['combat', 'Combat'], ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
+            ['migration', 'Migration'], ['combat', 'Combat'], ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
           ].map(([id, label]) => settingInput(id, label)).join('')}</div>
           <div class="ea-status" data-status>Waiting for Emberhold</div>
         </div></details>
@@ -1912,6 +1932,10 @@
           </div></details>
           <details data-ui-category="expeditions"><summary>Expeditions</summary><div class="ea-settings-grid">
             ${settingInput('expeditions', 'Automatic expeditions')}
+          </div></details>
+          <details data-ui-category="migration"><summary>Migration</summary><div class="ea-settings-grid">
+            ${settingInput('migration', 'Prepare declared migrations')}
+            <small>Commits one affordable 1% preparation tranche per loop. Declaring and setting out remain manual.</small>
           </div></details>
           <details data-ui-category="combat"><summary>Combat</summary><div class="ea-settings-grid">
             ${settingInput('combat', 'Automatic combat', 'checkbox')}

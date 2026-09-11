@@ -14,7 +14,7 @@ function harness() {
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
     window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower,
-    autoCraft, autoResearch, autoDiplomacy, autoExpeditions, autoWonderStart, autoWonderHandle,
+    autoCraft, autoResearch, autoDiplomacy, autoExpeditions, autoMigration, autoWonderStart, autoWonderHandle,
       autoCombat,
       automationStep, queuedDemand,
       availableWorkers, boot };
@@ -169,6 +169,42 @@ test('each stage refreshes resources and preserves queued reserves', () => {
   h.automationStep();
   assert.deepEqual(h.calls, [['build', 'hut']]);
   assert.equal(h.state.res.wood, 5);
+});
+
+test('migration preparation commits one affordable tranche and preserves queued reserves', () => {
+  const h = harness();
+  h.settings.migration = true;
+  h.state.migrating = true;
+  h.state.migrationPreparation = true;
+  h.state.projects = { migrationProvisions: 0, migrationCaravan: 0 };
+  h.state.res.food = 800;
+  h.state.res.wood = 1000;
+  h.api.definitions.RESOURCE_PROJECTS = [
+    { id: 'migrationProvisions', resource: 'food', total: 60000 },
+    { id: 'migrationCaravan', resource: 'wood', total: 40000 },
+  ];
+  h.action('migrationPrepare', id => {
+    h.state.projects[id] = 1;
+    h.state.res[id === 'migrationProvisions' ? 'food' : 'wood'] -= id === 'migrationProvisions' ? 600 : 400;
+    return 1;
+  });
+
+  h.autoMigration(h.api.getState(), { food: 100 });
+  assert.deepEqual(h.calls, [['migrationPrepare', 'migrationProvisions']]);
+  assert.equal(h.state.projects.migrationProvisions, 1);
+
+  h.calls.length = 0;
+  h.autoMigration(h.api.getState(), { food: 200, wood: 700 });
+  assert.deepEqual(h.calls, [], 'reserved wood must not be spent on migration preparation');
+});
+
+test('migration preparation does not declare or set out', () => {
+  const h = harness();
+  h.settings.migration = true;
+  h.state.migrating = false;
+  h.state.migrationPreparation = false;
+  h.autoMigration(h.api.getState(), {});
+  assert.deepEqual(h.calls, []);
 });
 
 test('strict queue order reserves only the first item in each queue', () => {
