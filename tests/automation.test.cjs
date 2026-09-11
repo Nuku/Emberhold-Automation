@@ -171,7 +171,7 @@ test('each stage refreshes resources and preserves queued reserves', () => {
   assert.equal(h.state.res.wood, 5);
 });
 
-test('migration preparation commits one affordable tranche and preserves queued reserves', () => {
+test('migration preparation commits every affordable tranche and preserves queued reserves', () => {
   const h = harness();
   h.settings.migration = true;
   h.state.migrating = true;
@@ -190,12 +190,19 @@ test('migration preparation commits one affordable tranche and preserves queued 
   });
 
   h.autoMigration(h.api.getState(), { food: 100 });
-  assert.deepEqual(h.calls, [['migrationPrepare', 'migrationProvisions']]);
+  assert.deepEqual(h.calls, [
+    ['migrationPrepare', 'migrationProvisions'],
+    ['migrationPrepare', 'migrationCaravan'],
+  ]);
   assert.equal(h.state.projects.migrationProvisions, 1);
 
   h.calls.length = 0;
-  h.autoMigration(h.api.getState(), { food: 200, wood: 700 });
-  assert.deepEqual(h.calls, [], 'reserved wood must not be spent on migration preparation');
+  h.state.res.food = 800;
+  h.state.projects.migrationProvisions = 0;
+  h.state.projects.migrationCaravan = 0;
+  h.autoMigration(h.api.getState(), { food: 100, wood: 700 });
+  assert.deepEqual(h.calls, [['migrationPrepare', 'migrationProvisions']],
+    'reserved wood must not be spent on migration preparation');
 });
 
 test('migration preparation does not declare or set out', () => {

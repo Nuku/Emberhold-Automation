@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.38
+// @version      1.30.39
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -977,8 +977,8 @@
 
   function autoMigration(state, demand) {
     // Migration is deliberately opt-in. Once the player has declared it,
-    // commit one affordable preparation tranche at a time, but leave the
-    // irreversible declaration and departure actions manual.
+    // commit one affordable tranche for each preparation project, but leave
+    // the irreversible declaration and departure actions manual.
     if (!state?.migrating || !state.migrationPreparation ||
         !(api().actions?.migrationPrepare || api().action)) return;
     const projects = definitions().RESOURCE_PROJECTS || [];
@@ -988,7 +988,7 @@
       if (!project.id || !project.resource || progress >= 100 || !Number.isFinite(total) || total <= 0) continue;
       const partCost = total / 100;
       if (Math.max(0, Number(state.res?.[project.resource] || 0) - Number(demand?.[project.resource] || 0)) < partCost) continue;
-      if (invoke('migrationPrepare', project.id)) return;
+      invoke('migrationPrepare', project.id);
     }
   }
 
