@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.40
+// @version      1.30.41
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -741,6 +741,17 @@
       releaseWorkers(id, Math.max(0, count(id) - targetCount));
     }
     for (const [id, amount] of additions) assignWorkers(id, amount, state);
+
+    // A healthy, well-stocked food store makes excess foragers ordinary
+    // donors. Release them before fallback staffing so idle villagers do not
+    // hide this opportunity and leave the workforce permanently overfed.
+    const foodIsHealthy = !foodEmergency && stock('food') >= reserve('food') &&
+      !(demand.food || 0) && foodRate >= 0;
+    if (foodIsHealthy) {
+      const foragers = jobCount('forager');
+      const surplusForagers = Math.max(0, foragers - donorMinimum('forager'));
+      if (surplusForagers) releaseWorkers('forager', surplusForagers);
+    }
     const remainingWorkers = availableWorkers(snapshot());
     let filledFallback = false;
     if (remainingWorkers > 0) {

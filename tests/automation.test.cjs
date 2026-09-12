@@ -897,6 +897,27 @@ test('food workers can be trimmed when live job rates are unavailable', () => {
   assert.ok(h.state.jobs.woodcutter > 2);
 });
 
+test('healthy food stock releases surplus foragers before fallback staffing', () => {
+  const h = harness();
+  h.state.pop = 8;
+  h.state.jobs = { forager: 4, woodcutter: 2 };
+  h.state.res = { food: 100, wood: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+  };
+  h.api.helpers.jobProduction = id => h.api.definitions.JOBS[id].base;
+  h.api.helpers.production = () => ({ food: 5, wood: 1 });
+  h.api.helpers.capacityOf = () => 100;
+  h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
+  h.action('assign', (id, delta) => { h.state.jobs[id] += delta; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.forager, 1);
+  assert.equal(h.state.jobs.woodcutter, 7);
+});
+
 test('starvation overrides non-food sustaining floors', () => {
   const h = harness();
   h.state.pop = 54;
