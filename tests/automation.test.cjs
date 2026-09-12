@@ -909,6 +909,8 @@ test('healthy food stock releases surplus foragers before fallback staffing', ()
   h.api.helpers.jobProduction = id => h.api.definitions.JOBS[id].base;
   h.api.helpers.production = () => ({ food: 5, wood: 1 });
   h.api.helpers.capacityOf = () => 100;
+  // The real game reports population as the capacity for uncapped jobs.
+  h.api.helpers.jobCapacity = id => id === 'forager' ? h.state.pop : NaN;
   h.action('setJob', (id, total) => { h.state.jobs[id] = total; });
   h.action('assign', (id, delta) => { h.state.jobs[id] += delta; });
 

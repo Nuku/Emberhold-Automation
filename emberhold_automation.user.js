@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.41
+// @version      1.30.42
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -663,7 +663,10 @@
     const jobCapacity = api().helpers?.jobCapacity;
     const jobLimit = id => {
       const reported = typeof jobCapacity === 'function' ? Number(jobCapacity(id)) : NaN;
-      if (Number.isFinite(reported)) return reported;
+      // Emberhold reports state.pop for uncapped Foragers. Do not mistake
+      // that sentinel for a real seat limit or healthy-food rebalancing pins
+      // every current Forager in place.
+      if (Number.isFinite(reported) && id !== 'forager') return reported;
       for (const field of ['max', 'limit']) {
         const value = defs[id]?.[field];
         if (value == null) continue;
