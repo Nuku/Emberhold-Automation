@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.42
+// @version      1.30.43
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -565,10 +565,11 @@
       // food workers in place when the live helper is unavailable.
       const perWorker = Number(effectiveJobRate?.(id) ?? defs[id]?.base ?? 0);
       if (!(perWorker > 0) || !Number.isFinite(rates[resource])) {
-        return id === 'forager' ? count(id) : 0;
+        return id === 'forager' ? jobCount(id) : 0;
       }
-      return Math.max(0, Math.min(count(id),
-        Math.ceil(count(id) - rates[resource] / perWorker - 1e-9)));
+      const current = jobCount(id);
+      return Math.max(0, Math.min(current,
+        Math.ceil(current - rates[resource] / perWorker - 1e-9)));
     };
     const minimum = id => Math.max(sustainingMinimum(id), coalReserveActive(id) ? count(id) :
       id === 'forager' ? 1 :
