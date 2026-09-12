@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.39
+// @version      1.30.40
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -690,11 +690,16 @@
     const plannedAmount = (id, amount) => Math.min(amount, availableJobRoom(id));
     const planned = new Map();
     if (!foodEmergency) {
-      for (const id of assignable) {
+      const finiteJobs = assignable
+        .filter(id => Number.isFinite(jobLimit(id)) && jobLimit(id) < state.pop &&
+          count(id) < jobLimit(id))
+        .sort((a, b) => Number(b === 'tinkerer') - Number(a === 'tinkerer'));
+      for (const id of finiteJobs) {
         const limit = jobLimit(id);
-        if (Number.isFinite(limit) && limit < state.pop && count(id) < limit) {
-          planned.set(id, limit - count(id));
-        }
+        const room = limit - count(id);
+        // Give the first available finite seat to a Tinkerer so spare
+        // villagers establish the job before filling other capped jobs.
+        planned.set(id, id === 'tinkerer' ? Math.min(1, room) : room);
       }
     }
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {

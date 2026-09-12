@@ -1404,6 +1404,26 @@ test('unlocked tinkerer fills its limited capacity with dynamic production', () 
   assert.equal(h.state.jobs.tinkerer, 2);
 });
 
+test('tinkerer gets the first spare seat among finite jobs', () => {
+  const h = harness();
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1 };
+  h.state.res = { food: 100, stone: 100, tools: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    miner: { res: 'stone', base: 1, max: 2 },
+    tinkerer: { res: 'tools', base: 1, max: 2, unlock: () => true },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, stone: 1, tools: 1 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.calls[0][1], 'tinkerer');
+  assert.ok(h.state.jobs.tinkerer >= 1);
+});
+
 test('food deficit with a healthy stockpile does not block capped jobs', () => {
   const h = harness();
   h.state.pop = 8;
