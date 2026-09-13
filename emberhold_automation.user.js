@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.43
+// @version      1.30.44
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -383,8 +383,40 @@
     return !!recipe && (!recipe.tech || state.techs?.[recipe.tech]);
   }
 
+  function factoryWithoutPower(state) {
+    const helper = api().helpers?.factoryWithoutPower;
+    if (typeof helper === 'function') {
+      try {
+        if (helper(state) === true) return true;
+      } catch (_) { /* Fall through to state telemetry. */ }
+    }
+
+    // Newer builds expose the reward directly. Keep the aliases here for
+    // save/API versions that use the reward, effect, or Wonder record shape.
+    const direct = [
+      state.factoryWithoutPower,
+      state.factoryPowerless,
+      state.rewards?.factoryWithoutPower,
+      state.effects?.factoryWithoutPower,
+      state.wonderRewards?.factoryWithoutPower,
+      state.fates?.factoryWithoutPower,
+    ];
+    if (direct.some(value => value === true)) return true;
+    const records = [
+      ...(Object.values(state.wonders || {})),
+      ...(Object.values(state.wonderFates || {})),
+    ];
+    return records.some(record => {
+      if (!record || typeof record !== 'object') return false;
+      const selected = [record.fate, record.fateId, record.outcome, record.outcomeId];
+      if (selected.some(value => String(value).toLowerCase() === 'silence')) return true;
+      return [record.outcomes, record.fates, record.rewards, record.effects]
+        .some(values => values && typeof values === 'object' && !!values.silence);
+    });
+  }
+
   function autoFactory(state, demand) {
-    if (!(state.bld?.factory > 0) ||
+    if (!(state.bld?.factory > 0 || factoryWithoutPower(state)) ||
         !(api().actions?.chooseFactoryRecipe || api().action)) return;
     const recipes = factoryRecipes().filter(recipe => factoryRecipeUnlocked(recipe, state));
     const byOutput = new Map(recipes.map(recipe => [recipe.id, recipe]));
@@ -833,8 +865,10 @@
     if (!power || !Number.isFinite(power.generated) || !Number.isFinite(power.used) ||
         !power.buildings || !(api().actions?.setBuildingPower || api().action)) return;
     const sites = Object.entries(power.buildings);
-    if (sites.some(([, site]) => !['built', 'enabled', 'used', 'powerPerBuilding']
-      .every(key => Number.isFinite(site[key])) || site.powerPerBuilding <= 0)) return;
+    if (sites.some(([id, site]) => !['built', 'enabled', 'used', 'powerPerBuilding']
+      .every(key => Number.isFinite(site[key])) ||
+      (site.powerPerBuilding < 0 || (site.powerPerBuilding === 0 &&
+        !(id === 'factory' && factoryWithoutPower(state)))))) return;
     const hasAllControls = sites.some(([id]) => id === 'factory') &&
       sites.some(([id]) => id === 'livingBlock');
     const optionalUsed = sites.reduce((sum, [, site]) => sum + site.used, 0);
@@ -874,8 +908,13 @@
         Number(b.site.resource === 'coal') - Number(a.site.resource === 'coal') ||
         a.id.localeCompare(b.id));
     const targets = ranked.map(({ id, site, priority }) => {
-      const count = priority ? Math.min(Math.floor(site.built),
-        Math.floor((budget + 1e-9) / site.powerPerBuilding)) : 0;
+      const count = priority
+        ? site.powerPerBuilding === 0
+          ? site.enabled
+          :
+            Math.min(Math.floor(site.built),
+              Math.floor((budget + 1e-9) / site.powerPerBuilding))
+        : 0;
       budget = Math.max(0, budget - count * site.powerPerBuilding);
       return { id, count, enabled: site.enabled };
     });

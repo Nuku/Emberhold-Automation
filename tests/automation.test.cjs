@@ -94,6 +94,31 @@ test('factories retask to produce queued outputs and their factory-made inputs',
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']]);
 });
 
+test('Silence lets Tinkerers select factory recipes before a Factory is built', () => {
+  const h = harness();
+  h.state.wonders = { worldAnvil: { fate: 'silence' } };
+  h.state.techs = { craftsmanship: true };
+  h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
+  h.autoFactory(h.api.getState(), { tools: 1 });
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'tools']]);
+});
+
+test('Silence accepts zero-power Factory telemetry', () => {
+  const h = harness();
+  h.state.bld = { factory: 1 };
+  h.state.wonders = { worldAnvil: { fate: 'silence' } };
+  h.state.buildingPower = { factory: 0, quarry: 1 };
+  h.api.getPower = () => ({ generated: 0, used: 0, buildings: {
+    factory: { built: 1, enabled: h.state.buildingPower.factory, active: 1,
+      used: 0, powerPerBuilding: 0 },
+    quarry: { built: 1, enabled: h.state.buildingPower.quarry, active: 0,
+      used: 0, powerPerBuilding: .2, resource: 'stone' },
+  }});
+  h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
+  h.autoPower(h.api.getState(), {});
+  assert.equal(h.calls.some(call => call[0] === 'setBuildingPower' && call[1] === 'factory'), false);
+});
+
 test('housing and a factory shortfall switch off optional loads', () => {
   const h = powerHarness(2, 1);
   h.autoPower(h.api.getState(), {});
