@@ -1364,6 +1364,20 @@ test('low morale emergency doubles performer staffing until morale reaches 25', 
   assert.equal(h.state.jobs.woodcutter, 29);
 });
 
+test('live morale telemetry releases the emergency surplus after recovery', () => {
+  const h = moraleHarness();
+  h.state.morale = 24;
+  h.api.helpers.morale = () => ({ rate: -0.21 });
+  h.api.helpers.marginalMorale = () => 0.10;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 8);
+
+  h.state.morale = 100;
+  h.api.helpers.morale = () => ({ rate: 0.49 });
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 4);
+});
+
 test('morale uses idle villagers before donors and releases excess performers', () => {
   const h = moraleHarness();
   h.state.jobs.woodcutter -= 4;
