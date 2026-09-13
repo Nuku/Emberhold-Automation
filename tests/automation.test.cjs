@@ -1492,6 +1492,25 @@ test('unlocked tinkerer fills its limited capacity with dynamic production', () 
   assert.equal(h.state.jobs.tinkerer, 2);
 });
 
+test('an unlocked tinkerer is assigned even when telemetry reports zero output', () => {
+  const h = harness();
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1, miner: 2 };
+  h.state.res = { food: 100, stone: 100, tools: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    miner: { res: 'stone', base: 1, max: 2 },
+    tinkerer: { res: 'tools', base: 0, max: 2, unlock: () => true },
+  };
+  h.api.helpers.jobProduction = id => id === 'tinkerer' ? 0 : 1;
+  h.api.helpers.production = () => ({ food: 1, stone: 1, tools: 0 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.ok(h.state.jobs.tinkerer >= 1);
+});
+
 test('tinkerer gets the first spare seat among finite jobs', () => {
   const h = harness();
   h.state.pop = 5;

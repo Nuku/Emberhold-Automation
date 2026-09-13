@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.48
+// @version      1.30.49
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -560,7 +560,8 @@
       ? Number(effectiveJobRate(id)) > 0
       : Number(defs[id].base) > 0;
     const assignable = jobOrder.filter(id => id !== 'guard' && !defs[id].targeted &&
-      defs[id].res && jobUnlocked(defs[id]) && productive(id));
+      defs[id].res && jobUnlocked(defs[id]) &&
+      (id === 'tinkerer' || productive(id)));
 
     const count = id => Number(state.jobs?.[id] || 0);
     const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
