@@ -13,7 +13,7 @@ function harness() {
   const context = vm.createContext({ window: { emberhold: api }, console,
     localStorage: { getItem: () => null }, document: { querySelector: () => null } });
   vm.runInContext(source.replace('  boot();', `
-    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower,
+    window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower, autoWoodFuel,
     autoCraft, autoResearch, autoDiplomacy, autoExpeditions, autoMigration, autoWonderStart, autoWonderHandle,
       autoCombat,
       automationStep, queuedDemand,
@@ -180,6 +180,47 @@ test('snapshot telemetry and legacy action dispatcher are supported', () => {
   h.api.action = (name, ...args) => setter(...args);
   h.autoPower(h.api.getState(), {});
   assert.equal(h.state.buildingPower.coalSeam, 5);
+});
+
+test('coal shortages move ongoing coal industry to wood', () => {
+  const h = harness();
+  h.state.res = { coal: 10, wood: 500 };
+  h.state.bld = { steamPlant: 2, forge: 1, factory: 1 };
+  h.state.jobs = { tinkerer: 3 };
+  h.state.settings = { woodForCoal: { steamPlant: 0, forge: 0, factory: 0, tinkerer: 0, cost: 1 } };
+  h.api.helpers.production = () => ({ coal: -0.2, wood: 1 });
+  h.api.helpers.capacityOf = id => ({ coal: 100, wood: 1000 }[id]);
+  h.api.helpers.woodFuelTotal = id => ({ steamPlant: 2, forge: 1, factory: 1, tinkerer: 3 }[id] || 0);
+  h.api.helpers.woodForCoalCount = (id, total) => h.state.settings.woodForCoal[id] || 0;
+  h.action('setWoodForCoal', (id, count) => { h.state.settings.woodForCoal[id] = count; });
+
+  h.autoWoodFuel(h.api.getState());
+  assert.deepEqual(h.calls, [
+    ['setWoodForCoal', 'steamPlant', 2],
+    ['setWoodForCoal', 'forge', 1],
+    ['setWoodForCoal', 'factory', 1],
+    ['setWoodForCoal', 'tinkerer', 3],
+  ]);
+  assert.equal(h.state.settings.woodForCoal.cost, 1,
+    'ongoing fuel switching must not consume the one-time cost setting');
+});
+
+test('coal fuel switching stays stable and returns to coal after recovery', () => {
+  const h = harness();
+  h.state.res = { coal: 80, wood: 500 };
+  h.state.bld = { forge: 1 };
+  h.state.settings = { woodForCoal: { forge: 1 } };
+  h.api.helpers.production = () => ({ coal: 0, wood: 1 });
+  h.api.helpers.capacityOf = id => ({ coal: 100, wood: 1000 }[id]);
+  h.api.helpers.woodFuelTotal = id => id === 'forge' ? 1 : 0;
+  h.api.helpers.woodForCoalCount = (id, total) => h.state.settings.woodForCoal[id] || 0;
+  h.action('setWoodForCoal', (id, count) => { h.state.settings.woodForCoal[id] = count; });
+
+  h.autoWoodFuel(h.api.getState());
+  assert.deepEqual(h.calls, [['setWoodForCoal', 'forge', 0]]);
+  h.calls.length = 0;
+  h.autoWoodFuel(h.api.getState());
+  assert.deepEqual(h.calls, [], 'stable fuel state must not issue repeated setters');
 });
 
 test('each stage refreshes resources and preserves queued reserves', () => {

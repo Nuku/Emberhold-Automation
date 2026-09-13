@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.51
+// @version      1.30.53
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -983,6 +983,44 @@
     }
   }
 
+  // Move coal-consuming industry to wood when the coal store is being
+  // depleted.  The game exposes one setting per process, so this can cover
+  // Steam Plants, Forges, Factories, and Tinkerers without changing queued
+  // one-time costs.
+  function autoWoodFuel(state) {
+    const fuelSetter = api().actions?.setWoodForCoal;
+    const countOf = api().helpers?.woodForCoalCount;
+    const totalOf = api().helpers?.woodFuelTotal;
+    if (typeof fuelSetter !== 'function' || typeof countOf !== 'function' ||
+        typeof totalOf !== 'function') return false;
+
+    const rates = api().helpers?.production?.(1) || {};
+    const coal = Number(state.res?.coal || 0);
+    const wood = Number(state.res?.wood || 0);
+    const capacityOf = api().helpers?.capacityOf;
+    const coalCapacity = typeof capacityOf === 'function' ? capacityOf('coal') : NaN;
+    const woodCapacity = typeof capacityOf === 'function' ? capacityOf('wood') : NaN;
+    const coalRate = Number(rates.coal);
+    const woodRate = Number(rates.wood);
+    const coalLagging = coalRate < -1e-9 ||
+      (Number.isFinite(coalCapacity) && coal <= coalCapacity * 0.25);
+    const woodCanCarryLoad = Number.isFinite(woodRate) && woodRate >= -1e-9 &&
+      (!Number.isFinite(woodCapacity) || wood >= woodCapacity * 0.25);
+    const coalRecovered = coalRate >= -1e-9 &&
+      (!Number.isFinite(coalCapacity) || coal >= coalCapacity * 0.5);
+    const ids = ['steamPlant', 'forge', 'factory', 'tinkerer'];
+    let changed = false;
+    for (const id of ids) {
+      const total = Math.max(0, Math.floor(Number(totalOf(id)) || 0));
+      if (!total) continue;
+      const current = Math.max(0, Math.min(total, Math.floor(Number(countOf(id, total)) || 0)));
+      const target = coalLagging && woodCanCarryLoad ? total : coalRecovered ? 0 : current;
+      if (target === current) continue;
+      if (invoke('setWoodForCoal', id, target)) changed = true;
+    }
+    return changed;
+  }
+
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
     const capacityOf = api().helpers?.capacityOf;
@@ -1605,7 +1643,7 @@
       for (const [setting, step] of [
         ['buildings', state => autoOwnQueue('build', state, queuedDemand(state))],
         ['research', state => autoOwnQueue('research', state, queuedDemand(state))],
-        ['power', autoFactory], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
+        ['power', autoFactory], ['power', autoWoodFuel], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
         ['migration', autoMigration],
