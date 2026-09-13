@@ -337,6 +337,27 @@ test('an idle villager starts exploring', () => {
   assert.deepEqual(h.calls, [['assignExplorer', 1]]);
 });
 
+test('food emergencies reclaim explorers for foraging', () => {
+  const h = harness();
+  h.state.pop = 3;
+  h.state.res.food = 0;
+  h.state.jobs = { forager: 1, explorer: 1 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    explorer: { targeted: true },
+  };
+  h.api.helpers.jobProduction = id => id === 'forager' ? 1 : 0;
+  h.api.helpers.production = () => ({ food: 0 });
+  h.action('assignExplorer', delta => { h.state.jobs.explorer += delta; });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.explorer, 0);
+  assert.ok(h.state.jobs.forager > 1);
+  assert.deepEqual(h.calls[0], ['assignExplorer', -1]);
+});
+
 test('wonder start waits for the beacon revisit and preserves queued demand', () => {
   const h = harness();
   h.settings.wonderStart = true;
@@ -1480,6 +1501,26 @@ test('tinkerer gets the first spare seat among finite jobs', () => {
     forager: { res: 'food', base: 1 },
     miner: { res: 'stone', base: 1, max: 2 },
     tinkerer: { res: 'tools', base: 1, max: 2, unlock: () => true },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, stone: 1, tools: 1 });
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.calls[0][1], 'tinkerer');
+  assert.ok(h.state.jobs.tinkerer >= 1);
+});
+
+test('tinkerer gets the first spare seat when its capacity is uncapped', () => {
+  const h = harness();
+  h.state.pop = 5;
+  h.state.jobs = { forager: 1 };
+  h.state.res = { food: 100, stone: 100, tools: 100 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    miner: { res: 'stone', base: 1, max: 2 },
+    tinkerer: { res: 'tools', base: 1, unlock: () => true },
   };
   h.api.helpers.jobProduction = () => 1;
   h.api.helpers.production = () => ({ food: 1, stone: 1, tools: 1 });

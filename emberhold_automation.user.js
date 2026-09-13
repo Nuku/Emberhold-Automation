@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.47
+// @version      1.30.48
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -578,6 +578,16 @@
     const foodRate = Number.isFinite(rates.food) ? rates.food : 0;
     const foodWorkerRate = Number(effectiveJobRate?.('forager') ?? defs.forager?.base ?? 0);
     const foodBuffer = (state.res.food || 0) <= 0 ? foodWorkerRate * 0.25 : 0;
+    const foodEmergency = stock('food') <= 0;
+    // Exploration is optional while the village is starving. Reclaim those
+    // workers before calculating the food deficit; the normal explorer-start
+    // path can send one back out once the emergency has cleared.
+    let explorerReclaimed = false;
+    if (foodEmergency && defs.explorer && count('explorer') > 0 &&
+        invoke('assignExplorer', -count('explorer'))) {
+      explorerReclaimed = true;
+      state = snapshot();
+    }
     if (assignable.includes('forager') && foodWorkerRate > 0 &&
         stock('food') <= 0 && foodRate < foodBuffer) {
       const required = Math.ceil((foodBuffer - foodRate) / foodWorkerRate);
@@ -678,7 +688,7 @@
     // Explorers are targeted workers, so ordinary production planning must
     // never retask them. Give exploration its initial worker whenever one is
     // idle, though, or it can never begin on its own.
-    if (defs.explorer && jobUnlocked(defs.explorer) && count('explorer') < 1 &&
+    if (!explorerReclaimed && defs.explorer && jobUnlocked(defs.explorer) && count('explorer') < 1 &&
         availableWorkers(state) > 0) {
       invoke('assignExplorer', 1);
       return;
@@ -690,7 +700,6 @@
     // An empty food store is an emergency. A negative rate still raises food
     // staffing through needs/shortage planning, but should not block finite
     // capacity jobs while the stockpile has room to recover.
-    const foodEmergency = stock('food') <= 0;
     // Tinkerer capacity is tied to the woodcutter count. Preserve the
     // woodcutters needed for the capacity we are trying to fill, otherwise
     // staffing Tinkerers lowers their cap and causes a one-tick oscillation.
@@ -757,6 +766,13 @@
     const plannedAmount = (id, amount) => Math.min(amount, availableJobRoom(id));
     const planned = new Map();
     if (!foodEmergency) {
+      // Tinkerers get the first non-forager seat whenever they can accept a
+      // worker. Some game builds expose that capacity as uncapped (or omit
+      // the cap), so do this explicitly instead of relying only on the
+      // finite-job ordering below.
+      if (assignable.includes('tinkerer') && availableJobRoom('tinkerer') > 0) {
+        planned.set('tinkerer', 1);
+      }
       const finiteJobs = assignable
         .filter(id => Number.isFinite(jobLimit(id)) && jobLimit(id) < state.pop &&
           count(id) < jobLimit(id))
