@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.46
+// @version      1.30.47
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -223,11 +223,13 @@
     const progress = Math.max(0, Math.min(100, Number(state.projects?.[project.id]) || 0));
     const total = Number(project.total);
     const partCost = total / 100;
-    // Only release this tranche when the caller supplied the migration reserve;
-    // callers may pass queue-only demand when checking migration directly.
+    // Remove migration's own reserve when checking its action. The reserve must
+    // remain active for every other automation stage, but migration can spend
+    // the tranche it currently has available and recreate the remainder next tick.
     if (project.resource && Number.isFinite(partCost) && partCost > 0 && progress < 100 &&
         Number(result[project.resource] || 0) >= Number(reserved[project.resource] || 0)) {
-      result[project.resource] = Math.max(0, (result[project.resource] || 0) - partCost);
+      result[project.resource] = Math.max(0,
+        (result[project.resource] || 0) - (reserved[project.resource] || 0));
     }
     return result;
   }

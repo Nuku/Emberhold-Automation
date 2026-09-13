@@ -235,7 +235,7 @@ test('migration demand reserves all remaining steps but permits the current tran
   h.state.migrating = true;
   h.state.migrationPreparation = true;
   h.state.projects = { migrationProvisions: 50 };
-  h.state.res.food = 30000;
+  h.state.res.food = 600;
   h.api.definitions.RESOURCE_PROJECTS = [
     { id: 'migrationProvisions', resource: 'food', total: 60000 },
   ];
