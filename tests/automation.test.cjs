@@ -1314,7 +1314,7 @@ test('morale assignments are not reclaimed by ordinary job planning', () => {
 function moraleHarness() {
   const h = harness();
   h.state.pop = 53;
-  h.state.morale = 0;
+  h.state.morale = 100;
   h.state.res = { food: 3440, wood: 27, stone: 1609, knowledge: 79 };
   h.state.jobs = { forager: 5, woodcutter: 38, thinker: 4, miner: 4,
     performer: 1, explorer: 1 };
@@ -1344,11 +1344,24 @@ test('morale recruits a full recovery team without waiting for population growth
   assert.equal(h.state.jobs.explorer, 1);
   assert.equal(h.availableWorkers(h.state), 0);
   const settledCalls = h.calls.length;
-  for (const morale of [0, 70, 80, 100, 115, 135]) {
+  for (const morale of [25, 70, 80, 100, 115, 135]) {
     h.state.morale = morale;
     h.autoMorale(h.api.getState());
   }
   assert.equal(h.calls.length, settledCalls);
+});
+
+test('low morale emergency doubles performer staffing until morale reaches 25', () => {
+  const h = moraleHarness();
+  h.state.morale = 24;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 10);
+  assert.equal(h.state.jobs.woodcutter, 29);
+
+  h.state.morale = 25;
+  h.autoMorale(h.api.getState());
+  assert.equal(h.state.jobs.performer, 5);
+  assert.equal(h.state.jobs.woodcutter, 29);
 });
 
 test('morale uses idle villagers before donors and releases excess performers', () => {

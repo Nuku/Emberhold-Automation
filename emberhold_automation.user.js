@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.49
+// @version      1.30.50
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -506,11 +506,16 @@
     // Prefer the game's live morale equation. A small positive margin keeps
     // recovery going as low-morale bonuses disappear and new penalties appear.
     // The legacy estimate remains for older game builds without telemetry.
-    const target = Number.isFinite(liveRate) && marginal > 0
+    const normalTarget = Number.isFinite(liveRate) && marginal > 0
       ? performers + Math.max(0, Math.ceil((0.025 - liveRate) / marginal - 1e-9))
       : Math.ceil((Math.max(0, state.pop - 20) * 0.01 +
         Number(state.bld?.livingBlock || 0) * 0.1 + conquered +
         0.060 + 0.006 + 0.008 + 0.025) / 0.10);
+    // A low morale emergency temporarily doubles the normal performer target
+    // so recovery has extra capacity until morale reaches the safe threshold.
+    const morale = Number(state.morale);
+    const target = Number.isFinite(morale) && morale < 25
+      ? normalTarget * 2 : normalTarget;
     if (performers > target) {
       for (let i = performers; i > target; i--) {
         if (!invoke('assignPerformer', -1)) break;
