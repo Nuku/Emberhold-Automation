@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.44
+// @version      1.30.46
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -176,7 +176,9 @@
 
   function queuedDemand(state = snapshot()) {
     const demand = !state?.settings?.strictQueueOrder ? (api().helpers?.queueDemand?.() || {}) : {};
-    if (!state?.settings?.strictQueueOrder) return mergeDemand(demand, ownQueueDemand(state));
+    if (!state?.settings?.strictQueueOrder) {
+      return mergeDemand(mergeDemand(demand, ownQueueDemand(state)), migrationDemand(state));
+    }
 
     // In strict mode the game only considers the first entry in each queue.
     // Do not reserve resources for later entries: doing so can prevent the
@@ -200,7 +202,34 @@
         gameDemand[resource] = (gameDemand[resource] || 0) + amount;
       }
     }
-    return mergeDemand(gameDemand, ownQueueDemand(state));
+    return mergeDemand(mergeDemand(gameDemand, ownQueueDemand(state)), migrationDemand(state));
+  }
+
+  function migrationDemand(state) {
+    if (!state?.migrating || !state.migrationPreparation) return {};
+    const demand = {};
+    for (const project of definitions().RESOURCE_PROJECTS || []) {
+      const progress = Math.max(0, Math.min(100, Number(state.projects?.[project.id]) || 0));
+      const total = Number(project.total);
+      if (!project.id || !project.resource || progress >= 100 || !Number.isFinite(total) || total <= 0) continue;
+      demand[project.resource] = (demand[project.resource] || 0) + total * (1 - progress / 100);
+    }
+    return demand;
+  }
+
+  function demandForMigrationAction(project, state, demand) {
+    const result = { ...(demand || {}) };
+    const reserved = migrationDemand(state);
+    const progress = Math.max(0, Math.min(100, Number(state.projects?.[project.id]) || 0));
+    const total = Number(project.total);
+    const partCost = total / 100;
+    // Only release this tranche when the caller supplied the migration reserve;
+    // callers may pass queue-only demand when checking migration directly.
+    if (project.resource && Number.isFinite(partCost) && partCost > 0 && progress < 100 &&
+        Number(result[project.resource] || 0) >= Number(reserved[project.resource] || 0)) {
+      result[project.resource] = Math.max(0, (result[project.resource] || 0) - partCost);
+    }
+    return result;
   }
 
   function mergeDemand(first, second) {
@@ -1046,7 +1075,8 @@
       const total = Number(project.total);
       if (!project.id || !project.resource || progress >= 100 || !Number.isFinite(total) || total <= 0) continue;
       const partCost = total / 100;
-      if (Math.max(0, Number(state.res?.[project.resource] || 0) - Number(demand?.[project.resource] || 0)) < partCost) continue;
+      const actionDemand = demandForMigrationAction(project, state, demand);
+      if (Math.max(0, Number(state.res?.[project.resource] || 0) - Number(actionDemand?.[project.resource] || 0)) < partCost) continue;
       invoke('migrationPrepare', project.id);
     }
   }
@@ -1628,6 +1658,10 @@
     const detail = panel.querySelector('.ea-settings') || detailedSettingsNode || document.querySelector('#emberhold-automation-settings .ea-settings');
     const host = gameSettingsHost();
     if (!detail || !host || host === panel || host.contains(detail)) return;
+    const scrollPositions = [];
+    for (let node = host; node && node !== document.body; node = node.parentElement) {
+      if (node.scrollTop || node.scrollHeight > node.clientHeight) scrollPositions.push([node, node.scrollTop]);
+    }
     detailedSettingsNode = detail;
     let wrapper = document.getElementById('emberhold-automation-settings');
     if (!wrapper) {
@@ -1637,6 +1671,10 @@
     }
     wrapper.appendChild(detail);
     host.appendChild(wrapper);
+    scrollPositions.forEach(([node, scrollTop]) => { node.scrollTop = scrollTop; });
+    window.requestAnimationFrame?.(() => scrollPositions.forEach(([node, scrollTop]) => {
+      if (node.isConnected) node.scrollTop = scrollTop;
+    }));
   }
 
   function settingInput(key, label, type = 'checkbox') {
@@ -2033,13 +2071,16 @@
         reader.readAsText(file);
       });
       moveDetailedSettings(panel);
+      makeSidebarScrollable(gameSettingsHost());
       makeSidebarScrollable(host);
     } else if (panel.parentElement !== host && host !== document.body) {
       host.appendChild(panel);
       moveDetailedSettings(panel);
+      makeSidebarScrollable(gameSettingsHost());
       makeSidebarScrollable(host);
     } else {
       moveDetailedSettings(panel);
+      makeSidebarScrollable(gameSettingsHost());
       makeSidebarScrollable(host);
     }
     return panel;

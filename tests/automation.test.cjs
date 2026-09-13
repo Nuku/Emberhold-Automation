@@ -230,6 +230,25 @@ test('migration preparation commits every affordable tranche and preserves queue
     'reserved wood must not be spent on migration preparation');
 });
 
+test('migration demand reserves all remaining steps but permits the current tranche', () => {
+  const h = harness();
+  h.state.migrating = true;
+  h.state.migrationPreparation = true;
+  h.state.projects = { migrationProvisions: 50 };
+  h.state.res.food = 30000;
+  h.api.definitions.RESOURCE_PROJECTS = [
+    { id: 'migrationProvisions', resource: 'food', total: 60000 },
+  ];
+  h.action('migrationPrepare', id => {
+    h.state.projects[id] += 1;
+    h.state.res.food -= 600;
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(h.queuedDemand(h.state))), { food: 30000 });
+  h.autoMigration(h.api.getState(), h.queuedDemand(h.state));
+  assert.deepEqual(h.calls, [['migrationPrepare', 'migrationProvisions']]);
+});
+
 test('migration preparation does not declare or set out', () => {
   const h = harness();
   h.settings.migration = true;
