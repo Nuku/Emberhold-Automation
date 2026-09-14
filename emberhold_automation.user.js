@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.53
+// @version      1.30.54
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1059,7 +1059,9 @@
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = typeof api().helpers?.buildingCost === 'function'
         ? api().helpers.buildingCost(def) : def.cost;
-      if (settings.crafting && craftMissingFor(cost, state, demand)) return;
+      // Supplying one building's missing dependency must not prevent later
+      // buildings that are already affordable from being considered this pass.
+      if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
       if (affordable(cost, state, demand)) {
         if (invoke('build', id)) return;
       }
