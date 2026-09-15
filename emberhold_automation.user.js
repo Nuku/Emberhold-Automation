@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.2
+// @version      1.31.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -938,10 +938,17 @@
     const hasAllControls = sites.some(([id]) => id === 'factory') &&
       sites.some(([id]) => id === 'livingBlock');
     const optionalUsed = sites.reduce((sum, [, site]) => sum + site.used, 0);
-    let budget = hasAllControls
-      ? Math.max(0, power.generated)
-      : Math.max(0, power.generated - Math.max(0, power.used - optionalUsed) -
-        (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
+    // Newer game builds expose the actual unallocated power explicitly. Add
+    // the currently tracked optional loads back so the planner can re-rank
+    // them and move capacity from lower-priority sites to shortages. This is
+    // safer than reconstructing the budget from `used`, whose semantics have
+    // changed as mining power caps evolved.
+    let budget = Number.isFinite(power.available)
+      ? Math.max(0, power.available + optionalUsed)
+      : hasAllControls
+        ? Math.max(0, power.generated)
+        : Math.max(0, power.generated - Math.max(0, power.used - optionalUsed) -
+          (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
     const rates = api().helpers?.production?.(1) || {};
     const jobs = definitions().JOBS || {};
     const siteOutput = site => {
