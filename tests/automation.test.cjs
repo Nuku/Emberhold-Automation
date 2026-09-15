@@ -320,6 +320,18 @@ test('strict queue order reserves only the first item in each queue', () => {
     { wood: 10, knowledge: 3, food: 4 });
 });
 
+test('strict queue order resolves synthetic beacon stages for factory demand', () => {
+  const h = harness();
+  h.state.settings = { strictQueueOrder: true };
+  h.state.queues.build = [{ type: 'build', id: 'beaconStage' }];
+  h.api.definitions.BUILDINGS = [{ id: 'beacon', cost: {
+    steel: 650, machinery: 260, goods: 200, aether: 130,
+  } }];
+  assert.deepEqual(JSON.parse(JSON.stringify(h.queuedDemand(h.state))), {
+    steel: 650, machinery: 260, goods: 200, aether: 130,
+  });
+});
+
 test('research queue demand includes every research resource', () => {
   const h = harness();
   h.state.settings = { strictQueueOrder: true };

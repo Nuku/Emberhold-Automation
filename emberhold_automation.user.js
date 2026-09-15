@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.0
+// @version      1.31.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -192,12 +192,16 @@
     for (const type of Object.keys(definitionsByType)) {
       const entry = state.queues?.[type]?.[0];
       if (!entry) continue;
-      const def = definitionsByType[type].find(item => item.id === entry.id);
-      const cost = type === 'build'
+      // Beacon/air-control progress uses synthetic queue ids while its cost
+      // still comes from the corresponding building definition.
+      const definitionId = type === 'build' && /Stage$/.test(entry.id)
+        ? entry.id.replace(/Stage$/, '') : entry.id;
+      const def = definitionsByType[type].find(item => item.id === definitionId);
+      const cost = api().helpers?.queueCost?.(entry) ?? (type === 'build'
         ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry.cost
         : type === 'research'
           ? (def ? researchCost(def) : entry.cost)
-          : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost;
+          : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
       for (const [resource, amount] of Object.entries(cost || {})) {
         gameDemand[resource] = (gameDemand[resource] || 0) + amount;
       }
