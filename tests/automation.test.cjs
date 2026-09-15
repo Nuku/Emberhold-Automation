@@ -167,6 +167,23 @@ test('power follows changing telemetry capacity without a fixed mining cap', () 
   assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 3]]);
 });
 
+test('power disables a full dig site using telemetry job identity', () => {
+  const h = harness();
+  h.state.bld = { quarry: 1 };
+  h.state.buildingPower = { quarry: 1 };
+  h.state.res.stone = 8422;
+  h.api.definitions.JOBS = { miner: { res: 'stone' } };
+  h.api.helpers.capacityOf = resource => resource === 'stone' ? 8422 : 100;
+  h.api.helpers.production = () => ({ stone: 1 });
+  h.api.getPower = () => ({ generated: 1, used: 0.2, available: 0.8, buildings: {
+    quarry: { built: 1, enabled: 1, active: 1, used: 0.2, powerPerBuilding: 0.2,
+      capacity: 0.2, workerCapacity: 1, job: 'miner' },
+  }});
+  h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 0]]);
+});
+
 test('full storage releases power and zero generation disables all optional loads', () => {
   const h = powerHarness();
   h.state.res.stone = 100;
