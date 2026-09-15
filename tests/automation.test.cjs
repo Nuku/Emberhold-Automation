@@ -134,6 +134,23 @@ test('power allocates whole buildings and prioritizes unmet queued resources', (
   assert.equal(h.state.buildingPower.coalSeam, 0);
 });
 
+test('power uses mining job capacity rather than building count', () => {
+  const h = harness();
+  h.state.bld = { quarry: 1 };
+  h.state.buildingPower = { quarry: 1 };
+  h.api.definitions.JOBS = { miner: { res: 'stone', poweredBuilding: 'quarry' } };
+  h.api.helpers.capacityOf = () => 100;
+  h.api.helpers.jobCapacity = () => 10;
+  h.api.helpers.production = () => ({ stone: 1 });
+  h.api.getPower = () => ({ generated: 2, used: 0.2, available: 1.8, buildings: {
+    quarry: { built: 1, enabled: h.state.buildingPower.quarry, active: 1,
+      used: 0.2, powerPerBuilding: 0.2, resource: 'stone', productionBonus: 0.1 },
+  }});
+  h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['setBuildingPower', 'quarry', 10]]);
+});
+
 test('full storage releases power and zero generation disables all optional loads', () => {
   const h = powerHarness();
   h.state.res.stone = 100;

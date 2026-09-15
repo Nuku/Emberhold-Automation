@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.3
+// @version      1.31.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -961,6 +961,14 @@
       // Use that worker's output when ranking queued resource shortages.
       return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
     };
+    const siteLimit = site => {
+      const poweredJob = Object.entries(jobs).find(([, job]) =>
+        job.poweredBuilding === site.id)?.[0];
+      const jobCapacity = poweredJob && api().helpers?.jobCapacity;
+      const reported = typeof jobCapacity === 'function'
+        ? Number(jobCapacity(poweredJob)) : NaN;
+      return Number.isFinite(reported) ? Math.max(0, Math.floor(reported)) : Math.floor(site.built);
+    };
     const priority = site => {
       const resource = siteOutput(site);
       if (site.id === 'livingBlock') return 4;
@@ -993,9 +1001,9 @@
     const targets = ranked.map(({ id, site, priority }) => {
       const count = priority
         ? site.powerPerBuilding === 0
-          ? site.enabled
-          :
-            Math.min(Math.floor(site.built),
+            ? site.enabled
+            :
+            Math.min(siteLimit(site),
               Math.floor((budget + 1e-9) / site.powerPerBuilding))
         : 0;
       budget = Math.max(0, budget - count * site.powerPerBuilding);
