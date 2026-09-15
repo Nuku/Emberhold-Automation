@@ -140,11 +140,11 @@ test('power uses mining job capacity rather than building count', () => {
   h.state.buildingPower = { quarry: 1 };
   h.api.definitions.JOBS = { miner: { res: 'stone', poweredBuilding: 'quarry' } };
   h.api.helpers.capacityOf = () => 100;
-  h.api.helpers.jobCapacity = () => 10;
   h.api.helpers.production = () => ({ stone: 1 });
   h.api.getPower = () => ({ generated: 2, used: 0.2, available: 1.8, buildings: {
     quarry: { built: 1, enabled: h.state.buildingPower.quarry, active: 1,
-      used: 0.2, powerPerBuilding: 0.2, resource: 'stone', productionBonus: 0.1 },
+      used: 0.2, powerPerBuilding: 0.2, capacity: 2, workerCapacity: 10,
+      resource: 'stone', productionBonus: 0.1 },
   }});
   h.action('setBuildingPower', (id, count) => { h.state.buildingPower[id] = count; });
   h.autoPower(h.api.getState(), {});

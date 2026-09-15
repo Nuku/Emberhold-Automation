@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.4
+// @version      1.31.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -962,6 +962,15 @@
       return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
     };
     const siteLimit = site => {
+      // Current telemetry reports the site's actual power capacity. Dig sites
+      // additionally report the worker cap, which avoids converting power
+      // units back into workers when the per-worker cost changes.
+      if (Number.isFinite(site.workerCapacity)) {
+        return Math.max(0, Math.floor(site.workerCapacity));
+      }
+      if (Number.isFinite(site.capacity) && site.powerPerBuilding > 0) {
+        return Math.max(0, Math.floor((site.capacity + 1e-9) / site.powerPerBuilding));
+      }
       const poweredJob = Object.entries(jobs).find(([, job]) =>
         job.poweredBuilding === site.id)?.[0];
       const jobCapacity = poweredJob && api().helpers?.jobCapacity;
