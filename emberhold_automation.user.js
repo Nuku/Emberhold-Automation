@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.9
+// @version      1.32.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -958,8 +958,17 @@
       if (site.id === 'aluminumWorks') return 'aluminum';
       if (site.resource) return site.resource;
       const jobId = typeof site.job === 'string' ? site.job : site.job?.id;
-      if (site.job && typeof site.job === 'object' && site.job.res) return site.job.res;
-      if (jobId && jobs[jobId]?.res) return jobs[jobId].res;
+      if (site.job && typeof site.job === 'object') {
+        if (site.job.res || site.job.resource || site.job.output) {
+          return site.job.res || site.job.resource || site.job.output;
+        }
+      }
+      const jobDef = Array.isArray(jobs)
+        ? jobs.find(job => job.id === jobId)
+        : jobs[jobId];
+      if (jobDef?.res || jobDef?.resource || jobDef?.output) {
+        return jobDef.res || jobDef.resource || jobDef.output;
+      }
       // Powered buildings can support workers rather than produce directly.
       // Use that worker's output when ranking queued resource shortages.
       return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
