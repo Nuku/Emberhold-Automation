@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.32.0
+// @version      1.33.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -925,6 +925,7 @@
   // Keep the legacy reserve for older API snapshots. Newer snapshots expose
   // factories and Living Blocks as controllable power buildings themselves.
   const FACTORY_POWER_REQUIREMENT = 1.5;
+  let coalFuelRecoveryLock = false;
 
   function autoPower(state, demand) {
     const power = state.power || api().getPower?.();
@@ -1064,22 +1065,33 @@
     const woodCapacity = typeof capacityOf === 'function' ? capacityOf('wood') : NaN;
     const coalRate = Number(rates.coal);
     const woodRate = Number(rates.wood);
-    const coalLagging = coalRate < -1e-9 ||
-      (Number.isFinite(coalCapacity) && coal <= coalCapacity * 0.25);
+    const coalLagging = coalFuelRecoveryLock
+      ? (Number.isFinite(coalCapacity) && coal <= coalCapacity * 0.25)
+      : coalRate < -1e-9 ||
+        (Number.isFinite(coalCapacity) && coal <= coalCapacity * 0.25);
     const woodCanCarryLoad = Number.isFinite(woodRate) && woodRate >= -1e-9 &&
       (!Number.isFinite(woodCapacity) || wood >= woodCapacity * 0.25);
-    const coalRecovered = coalRate >= -1e-9 &&
-      (!Number.isFinite(coalCapacity) || coal >= coalCapacity * 0.5);
     const ids = ['steamPlant', 'forge', 'factory', 'tinkerer'];
+    const usingWood = ids.some(id => {
+      const total = Math.max(0, Math.floor(Number(totalOf(id)) || 0));
+      return total > 0 && Math.max(0, Math.floor(Number(countOf(id, total)) || 0)) > 0;
+    });
+    if (usingWood) coalFuelRecoveryLock = false;
+    const coalRecovered = !coalFuelRecoveryLock && coalRate >= -1e-9 &&
+      (!Number.isFinite(coalCapacity) || coal >= coalCapacity * 0.5);
     let changed = false;
+    let returnedToCoal = false;
     for (const id of ids) {
       const total = Math.max(0, Math.floor(Number(totalOf(id)) || 0));
       if (!total) continue;
       const current = Math.max(0, Math.min(total, Math.floor(Number(countOf(id, total)) || 0)));
       const target = coalLagging && woodCanCarryLoad ? total : coalRecovered ? 0 : current;
       if (target === current) continue;
+      if (coalRecovered && target === 0) returnedToCoal = true;
       if (invoke('setWoodForCoal', id, target)) changed = true;
     }
+    if (returnedToCoal && changed) coalFuelRecoveryLock = true;
+    if (coalLagging && changed) coalFuelRecoveryLock = false;
     return changed;
   }
 

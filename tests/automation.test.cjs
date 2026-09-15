@@ -321,6 +321,26 @@ test('coal fuel switching stays stable and returns to coal after recovery', () =
   assert.deepEqual(h.calls, [], 'stable fuel state must not issue repeated setters');
 });
 
+test('coal recovery does not immediately oscillate back to wood', () => {
+  const h = harness();
+  h.state.res = { coal: 80, wood: 500 };
+  h.state.bld = { forge: 1 };
+  h.state.settings = { woodForCoal: { forge: 1 } };
+  let coalRate = 0;
+  h.api.helpers.production = () => ({ coal: coalRate, wood: 1 });
+  h.api.helpers.capacityOf = id => ({ coal: 100, wood: 1000 }[id]);
+  h.api.helpers.woodFuelTotal = id => id === 'forge' ? 1 : 0;
+  h.api.helpers.woodForCoalCount = (id, total) => h.state.settings.woodForCoal[id] || 0;
+  h.action('setWoodForCoal', (id, count) => { h.state.settings.woodForCoal[id] = count; });
+
+  h.autoWoodFuel(h.api.getState());
+  assert.deepEqual(h.calls, [['setWoodForCoal', 'forge', 0]]);
+  h.calls.length = 0;
+  coalRate = -1;
+  h.autoWoodFuel(h.api.getState());
+  assert.deepEqual(h.calls, [], 'negative coal rate must not immediately re-enable wood');
+});
+
 test('each stage refreshes resources and preserves queued reserves', () => {
   const h = harness();
   Object.assign(h.settings, { jobs: false, crafting: false, expeditions: false });
