@@ -145,6 +145,20 @@ test('full storage releases power and zero generation disables all optional load
   assert.equal(empty.state.buildingPower.quarry, 0);
 });
 
+test('full aluminum storage disables the Sky Metal Forge', () => {
+  const h = powerHarness(3);
+  h.state.bld.aluminumWorks = 5;
+  h.state.res.aluminum = 100;
+  h.state.buildingPower.aluminumWorks = 5;
+  h.api.helpers.capacityOf = resource => resource === 'aluminum' ? 100 : 1000;
+  h.api.getPower = () => ({ generated: 3, used: 1,
+    buildings: {
+      aluminumWorks: { built: 5, enabled: 5, active: 5, used: 1, powerPerBuilding: .2 },
+    } });
+  h.autoPower(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['setBuildingPower', 'aluminumWorks', 0]]);
+});
+
 test('failed and partially applied load shedding never enables replacement loads', () => {
   for (const partial of [false, true]) {
     const h = powerHarness();

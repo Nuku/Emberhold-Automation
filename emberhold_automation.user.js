@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.1
+// @version      1.31.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -946,6 +946,9 @@
     const jobs = definitions().JOBS || {};
     const siteOutput = site => {
       if (site.id === 'factory') return currentFactoryRecipe(state)?.id || 'goods';
+      // The game's power telemetry omits resource for the Sky Metal Forge,
+      // even though it fills Aluminum storage like a direct production site.
+      if (site.id === 'aluminumWorks') return 'aluminum';
       if (site.resource) return site.resource;
       // Powered buildings can support workers rather than produce directly.
       // Use that worker's output when ranking queued resource shortages.
