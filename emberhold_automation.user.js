@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.33.1
+// @version      1.34.0
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -930,12 +930,33 @@
   function autoPower(state, demand) {
     const power = state.power || api().getPower?.();
     if (!power || !Number.isFinite(power.generated) || !Number.isFinite(power.used) ||
-        !power.buildings || !(api().actions?.setBuildingPower || api().action)) return;
-    const sites = Object.entries(power.buildings);
-    if (sites.some(([id, site]) => !['built', 'enabled', 'used', 'powerPerBuilding']
+        !power.buildings || !(api().actions?.setBuildingPower || api().action)) {
+      lastAction = 'Power skipped: incomplete telemetry or action API';
+      return;
+    }
+    const powerCost = site => {
+      for (const key of ['powerPerBuilding', 'powerPerWorker', 'powerPerUnit']) {
+        if (Number.isFinite(site[key])) return Number(site[key]);
+      }
+      if (Number.isFinite(site.active) && site.active > 0 && Number.isFinite(site.used)) {
+        return site.used / site.active;
+      }
+      if (Number.isFinite(site.enabled) && site.enabled > 0 && Number.isFinite(site.requested)) {
+        return site.requested / site.enabled;
+      }
+      return NaN;
+    };
+    const sites = Object.entries(power.buildings).map(([id, raw]) => [id, {
+      ...raw,
+      powerPerBuilding: powerCost(raw),
+    }]);
+    if (sites.some(([id, site]) => !['enabled', 'used', 'powerPerBuilding']
       .every(key => Number.isFinite(site[key])) ||
       (site.powerPerBuilding < 0 || (site.powerPerBuilding === 0 &&
-        !(id === 'factory' && factoryWithoutPower(state)))))) return;
+        !(id === 'factory' && factoryWithoutPower(state)))))) {
+      lastAction = 'Power skipped: unsupported building telemetry';
+      return;
+    }
     const hasAllControls = sites.some(([id]) => id === 'factory') &&
       sites.some(([id]) => id === 'livingBlock');
     const optionalUsed = sites.reduce((sum, [, site]) => sum + site.used, 0);
