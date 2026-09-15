@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.34.0
+// @version      1.34.1
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -950,11 +950,17 @@
       ...raw,
       powerPerBuilding: powerCost(raw),
     }]);
-    if (sites.some(([id, site]) => !['enabled', 'used', 'powerPerBuilding']
-      .every(key => Number.isFinite(site[key])) ||
+    const unsupported = sites.filter(([id, site]) =>
+      !['enabled', 'used', 'powerPerBuilding'].every(key => Number.isFinite(site[key])) ||
       (site.powerPerBuilding < 0 || (site.powerPerBuilding === 0 &&
-        !(id === 'factory' && factoryWithoutPower(state)))))) {
-      lastAction = 'Power skipped: unsupported building telemetry';
+        !(id === 'factory' && factoryWithoutPower(state)))));
+    if (unsupported.length) {
+      const detail = unsupported.map(([id, site]) => {
+        const missing = ['enabled', 'used', 'powerPerBuilding']
+          .filter(key => !Number.isFinite(site[key]));
+        return `${id}:${missing.join('|') || 'invalid'}`;
+      }).join(',');
+      lastAction = `Power skipped: unsupported telemetry (${detail})`;
       return;
     }
     const hasAllControls = sites.some(([id]) => id === 'factory') &&
