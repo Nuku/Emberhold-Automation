@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.30.54
+// @version      1.30.55
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -363,22 +363,26 @@
     return [...new Set([...preferred.filter(id => ids.includes(id)), ...ids])];
   }
   const RESEARCH_ORDER = [
-    'stoneWorking', 'writing', 'craftsmanship', 'masonry', 'copperProspecting',
+    'stoneWorking', 'writing', 'craftsmanship', 'masonry', 'copperProspecting', 'treeHusbandry',
     'currency', 'guards', 'leatherArmor', 'deepMining', 'seamMining',
-    'metallurgy', 'weaponry', 'banking', 'diplomacy', 'civics', 'council',
+    'metallurgy', 'chainmail', 'ironMites', 'weaponry', 'banking', 'diplomacy', 'civics', 'council',
     'machineryTech', 'hydraulics', 'weaponEfficiency', 'electricalEngineering',
-    'advancedScience', 'astronomy', 'optics', 'aphrodisiac', 'hospital',
+    'advancedScience', 'aluminum', 'airControl', 'oilPower', 'livingAlloy', 'heartwood',
+    'starGlass', 'windHarness', 'astronomy', 'optics', 'aphrodisiac', 'hospital',
   ];
   const BUILD_ORDER = [
-    'hut', 'storehouse', 'foragerLodge', 'lumberYard', 'quarry', 'stoneWorks',
+    'hut', 'storehouse', 'foragerLodge', 'ranch', 'lumberYard', 'quarry', 'stoneWorks',
     'workbench', 'library', 'monument', 'barracks', 'trainingYard', 'hospital', 'deepMine', 'deepStore',
-    'coalSeam', 'forge', 'aqueduct', 'shrine', 'amphitheatre', 'workshop',
-    'steamPlant', 'dynamo', 'vault', 'factory', 'instrumentHall', 'observatory', 'beacon',
+    'coalSeam', 'forge', 'aqueduct', 'moneyLender', 'shrine', 'amphitheatre', 'workshop',
+    'aluminumWorks', 'steamPlant', 'oilPowerPlant', 'solarArray', 'dynamo', 'vault', 'factory',
+    'livingBlock', 'instrumentHall', 'alloyMine', 'heartwoodGrove', 'starLens', 'windDevice',
+    'observatory', 'beacon', 'airControl', 'tradeBlimp', 'surveyFlights', 'blackGoldDrill',
   ];
   const STORAGE_BUILDINGS = new Set(['storehouse', 'deepStore', 'vault']);
   const JOB_ORDER = [
-    'forager', 'woodcutter', 'miner', 'thinker', 'experimentalist', 'tinkerer', 'digger',
-    'ironminer', 'copperminer', 'astronomer', 'banker', 'diplomat',
+    'forager', 'woodcutter', 'rancher', 'miner', 'thinker', 'experimentalist', 'tinkerer', 'digger',
+    'ironminer', 'copperminer', 'aluminumminer', 'alloyminer', 'heartwoodcutter', 'starglasscutter',
+    'astronomer', 'banker', 'diplomat',
   ];
   // Current game builds export FACTORY_RECIPES. Keep the current public
   // recipes as a compatibility fallback for older builds.
@@ -661,6 +665,10 @@
       ['miner', 'stone', reserve('stone')],
       ['thinker', 'knowledge', reserve('knowledge')],
     ];
+    // Ranchers are listed as food workers by the game, but their distinctive
+    // output is Fur. Without this secondary-resource target they would only
+    // be assigned during a food shortage and Fur would never accumulate.
+    if (assignable.includes('rancher')) needs.push(['rancher', 'fur', reserve('fur')]);
     const specialistNeeds = assignable
       .filter(id => defs[id].res && Number(defs[id].base) > 0 &&
         !needs.some(([job]) => job === id))
@@ -932,13 +940,20 @@
         (state.bld.factory || 0) * FACTORY_POWER_REQUIREMENT);
     const rates = api().helpers?.production?.(1) || {};
     const jobs = definitions().JOBS || {};
+    const siteOutput = site => {
+      if (site.id === 'factory') return currentFactoryRecipe(state)?.id || 'goods';
+      if (site.resource) return site.resource;
+      // Powered buildings can support workers rather than produce directly.
+      // Use that worker's output when ranking queued resource shortages.
+      return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
+    };
     const priority = site => {
-      const resource = site.resource;
+      const resource = siteOutput(site);
       if (site.id === 'livingBlock') return 4;
       // Queue reservations are the next priority after residential capacity.
       // Factories produce their selected recipe, while dig sites produce their
       // reported resource.
-      const output = site.id === 'factory' ? currentFactoryRecipe(state)?.id || 'goods' : resource;
+      const output = resource;
       if ((demand[output] || 0) > 0) return 3;
       if (site.id === 'factory') return 1;
       const stock = state.res[resource] || 0;
