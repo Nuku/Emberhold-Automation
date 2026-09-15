@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.31.7
+// @version      1.31.8
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1001,10 +1001,14 @@
             site.productionBonus / (1 + site.productionBonus);
         }
       }
+      const capacity = api().helpers?.capacityOf?.(resource);
+      // A full store does not need replacement production, even when an
+      // ongoing consumer makes the net rate negative. Let the store fall
+      // below capacity before re-enabling the site.
+      if (Number.isFinite(capacity) && stock >= capacity) return 0;
       if (baseline < -1e-9) return 3;
       if ((demand[resource] || 0) > stock) return 2;
-      const capacity = api().helpers?.capacityOf?.(resource);
-      return !Number.isFinite(capacity) || stock < capacity ? 1 : 0;
+      return 1;
     };
     const ranked = sites.map(([id, site]) => ({ id, site: { ...site, id }, priority: priority({ ...site, id }) }))
       .sort((a, b) => b.priority - a.priority ||
