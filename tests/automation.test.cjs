@@ -94,6 +94,40 @@ test('factories retask to produce queued outputs and their factory-made inputs',
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']]);
 });
 
+test('Divided Attention reconciles both selected factory outputs', () => {
+  const h = harness();
+  h.state.bld.factory = 2;
+  h.state.upgrades = { dividedAttention: 1 };
+  h.state.techs = { craftsmanship: true, metallurgy: true, machineryTech: true };
+  h.state.factoryRecipes = ['goods', 'tools'];
+  h.action('chooseFactoryRecipe', id => {
+    const selected = h.state.factoryRecipes;
+    const index = selected.indexOf(id);
+    if (index >= 0) {
+      if (selected.length > 1) selected.splice(index, 1);
+    } else if (selected.length < 2) selected.push(id);
+    h.state.factoryRecipe = selected[0];
+  });
+
+  h.autoFactory(h.api.getState(), { tools: 1, machinery: 1 });
+  assert.deepEqual(h.state.factoryRecipes, ['tools', 'steel']);
+  assert.deepEqual(h.calls, [
+    ['chooseFactoryRecipe', 'goods'],
+    ['chooseFactoryRecipe', 'steel'],
+  ]);
+});
+
+test('Idle Hands does not assign a redundant Forager', () => {
+  const h = harness();
+  h.state.pop = 1;
+  h.state.upgrades = { idleHands: 1 };
+  h.api.definitions.JOBS = { forager: { res: 'food', base: 0.55 } };
+  h.api.helpers.production = () => ({ food: 0.55 });
+  h.autoJobs(h.api.getState(), {});
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.state.jobs.forager || 0, 0);
+});
+
 test('Silence lets Tinkerers select factory recipes before a Factory is built', () => {
   const h = harness();
   h.state.wonders = { worldAnvil: { fate: 'silence' } };

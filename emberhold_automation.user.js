@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.1
+// @version      1.35.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -307,6 +307,10 @@
     return Math.max(0, state.pop - assigned - diplomats);
   }
 
+  function idleHandsActive(state) {
+    return Number(state?.upgrades?.idleHands || 0) > 0 && state?.trial?.id !== 'whiteout';
+  }
+
   function jobCount(id) {
     return Number(snapshot()?.jobs?.[id] || 0);
   }
@@ -414,7 +418,8 @@
   }
 
   function currentFactoryRecipe(state) {
-    const current = state.factoryRecipe || api().helpers?.factoryRecipe?.()?.id;
+    const current = (Array.isArray(state.factoryRecipes) ? state.factoryRecipes[0] : null) ||
+      state.factoryRecipe || api().helpers?.factoryRecipe?.()?.id;
     return factoryRecipes().find(recipe => recipe.id === current) || factoryRecipes()[0];
   }
 
@@ -483,8 +488,34 @@
       }
       return null;
     };
-    const target = inputRecipe(goals[0]) || goals[0];
-    if (currentFactoryRecipe(state)?.id !== target.id) invoke('chooseFactoryRecipe', target.id);
+    const targets = goals.map(goal => inputRecipe(goal) || goal);
+    const targetIds = [...new Set(targets.map(recipe => recipe.id))].slice(0,
+      state.upgrades?.dividedAttention ? 2 : 1);
+    const selectedIds = [...new Set(
+      (Array.isArray(state.factoryRecipes) ? state.factoryRecipes : [state.factoryRecipe])
+        .filter(Boolean))];
+
+    // Divided Attention turns recipe selection into a two-item toggle. Reconcile
+    // the whole selection rather than repeatedly changing only the first line;
+    // otherwise a stale second recipe can consume half of the factories and
+    // starve the newly requested output.
+    if (state.upgrades?.dividedAttention) {
+      for (const id of selectedIds) {
+        if (!targetIds.includes(id) && selectedIds.length > 1) {
+          invoke('chooseFactoryRecipe', id);
+          selectedIds.splice(selectedIds.indexOf(id), 1);
+        }
+      }
+      for (const id of targetIds) {
+        if (!selectedIds.includes(id) && selectedIds.length < 2) {
+          invoke('chooseFactoryRecipe', id);
+          selectedIds.push(id);
+        }
+      }
+      return;
+    }
+
+    if (currentFactoryRecipe(state)?.id !== targetIds[0]) invoke('chooseFactoryRecipe', targetIds[0]);
   }
 
   function autoMorale(state) {
@@ -579,8 +610,12 @@
 
     const count = id => Number(state.jobs?.[id] || 0);
     const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
+    const idleHands = idleHandsActive(state);
     const minimums = [
-      ['forager', 1],
+      // Idle Hands makes an unassigned villager produce at Forager rate, so a
+      // dedicated Forager is unnecessary unless every population slot is in
+      // use and the food planner genuinely needs to transfer a worker.
+      ['forager', idleHands ? 0 : 1],
       ['woodcutter', 1],
       ['miner', state.pop >= 6 ? 1 : 0],
       ['thinker', state.pop >= 8 ? 1 : 0],
@@ -728,6 +763,7 @@
       return Math.max(0, (target - 1) * 5);
     };
     const donorMinimum = id => {
+      if (id === 'forager' && idleHands) return 0;
       const cappedJobNeedsWorkers = assignable.some(job => {
         const limit = jobLimit(job);
         return Number.isFinite(limit) && count(job) < limit;
@@ -807,6 +843,7 @@
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
       if (!assignable.includes(id)) continue;
       if (foodEmergency && knowledgeWorker(id)) continue;
+      if (id === 'forager' && idleHands && availableWorkers(state) > 0) continue;
       const amount = plannedAmount(id, neededWorkers(id, resource, target));
       if (amount) planned.set(id, Math.max(planned.get(id) || 0, amount));
     }
@@ -859,6 +896,7 @@
     if (remainingWorkers > 0) {
       const fallback = assignable
         .filter(id => {
+          if (id === 'forager' && idleHands) return false;
           const limit = jobLimit(id);
           return (!Number.isFinite(limit) || jobCount(id) < limit) &&
             (id !== 'forager' || !assignable.some(other => other !== 'forager' &&
