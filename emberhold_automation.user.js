@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.2
+// @version      1.35.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -462,6 +462,11 @@
   function autoFactory(state, demand) {
     if (!(state.bld?.factory > 0 || factoryWithoutPower(state)) ||
         !(api().actions?.chooseFactoryRecipe || api().action)) return;
+    // Wonder discovery is not itself a queue entry, but its resource cost is
+    // still an immediate production target once all non-resource gates pass.
+    // Keep this reserve local so autoWonderStart can still test affordability
+    // against the ordinary queue demand.
+    demand = mergeDemand(demand, pendingWonderDemand(state));
     const recipes = factoryRecipes().filter(recipe => factoryRecipeUnlocked(recipe, state));
     const byOutput = new Map(recipes.map(recipe => [recipe.id, recipe]));
     const stock = resource => Math.max(0, Number(state.res?.[resource] || 0));
@@ -484,7 +489,13 @@
         const producer = byOutput.get(input);
         if (!producer) continue;
         const buffer = Math.max(Number(rate) || 0, (Number(rate) || 0) * factoryCount * 10);
-        if (stock(input) < buffer) return inputRecipe(producer, nextSeen) || producer;
+        // Queued projects can reserve a large amount of a factory-made input
+        // even while its current stock is comfortably above the small
+        // immediate-production buffer. Produce that input before its consumer
+        // so the queue's demand does not leave the factory on the wrong line.
+        if ((demand[input] || 0) > stock(input) || stock(input) < buffer) {
+          return inputRecipe(producer, nextSeen) || producer;
+        }
       }
       return null;
     };
@@ -1635,6 +1646,17 @@
         .filter(([id]) => id !== 'survey')), state, demand);
   }
 
+  function pendingWonderDemand(state) {
+    if (!settings.wonderStart || !(api().actions?.findWonder || api().action)) return {};
+    const def = (definitions().WONDERS || []).find(item => item.id === state.landing);
+    const record = state.wonders?.[state.landing];
+    if (!def || record?.found || (record?.outcomes && Object.keys(record.outcomes).length >= 3) ||
+        !state.techs?.optics || !state.beaconsLit?.[state.landing] ||
+        !state.beaconRevisited?.[state.landing] || !wonderGuardsReady(state)) return {};
+    return Object.fromEntries(Object.entries(wonderFindCost(def, state))
+      .filter(([id]) => id !== 'survey'));
+  }
+
   function wonderGuardCapacity(state) {
     const reported = api().helpers?.jobCapacity?.('guard');
     if (Number.isFinite(Number(reported))) return Math.max(0, Math.floor(Number(reported)));
@@ -1652,6 +1674,29 @@
     const prefix = `wonderObstacle:${state.landing}:`;
     return (state.queues?.build || []).some(entry =>
       typeof entry.id === 'string' && entry.id.startsWith(prefix));
+  }
+
+  function prioritizeWonderObstacle(state) {
+    const queue = state.queues?.build || [];
+    const index = queue.findIndex(entry =>
+      typeof entry.id === 'string' && entry.id.startsWith(`wonderObstacle:${state.landing}:`));
+    if (index <= 0) return;
+    const id = queue[index].id;
+    const actions = api().actions || {};
+    const candidates = [
+      ['moveQueueItem', ['build', index, 0]],
+      ['reorderQueue', ['build', index, 0]],
+      ['prioritizeQueue', ['build', index]],
+      ['moveBuildingToFront', [id]],
+      ['prioritizeBuilding', [id]],
+    ];
+    for (const [name, args] of candidates) {
+      if (typeof actions[name] !== 'function') continue;
+      if (!invoke(name, ...args)) continue;
+      const after = snapshot();
+      const first = after?.queues?.build?.[0]?.id;
+      if (first === id) return;
+    }
   }
 
   function autoWonderStart(state, demand) {
@@ -1719,6 +1764,7 @@
     if (api().actions?.wonderObstacle && invoke('wonderObstacle')) {
       const after = snapshot();
       if (wonderObstacleQueued(after)) {
+        prioritizeWonderObstacle(after);
         const workers = Math.max(0, Math.floor(Number(after.rapture?.workers || 0)));
         if (workers > 2) invoke('assignRapture', 2 - workers);
       }

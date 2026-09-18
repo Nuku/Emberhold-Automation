@@ -89,6 +89,13 @@ test('factories retask to produce queued outputs and their factory-made inputs',
     'Machinery must first stock the Steel its factory line consumes');
 
   h.calls.length = 0;
+  h.state.factoryRecipe = 'machinery';
+  h.state.res.steel = 235;
+  h.autoFactory(h.api.getState(), { steel: 384, machinery: 154 });
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'steel']],
+    'Queued Steel demand must take priority over the Machinery line');
+
+  h.calls.length = 0;
   h.state.res.steel = 1;
   h.autoFactory(h.api.getState(), { machinery: 1 });
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']]);
@@ -135,6 +142,24 @@ test('Silence lets Tinkerers select factory recipes before a Factory is built', 
   h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
   h.autoFactory(h.api.getState(), { tools: 1 });
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'tools']]);
+});
+
+test('factory planning includes a pending Wonder discovery cost', () => {
+  const h = harness();
+  h.settings.wonderStart = true;
+  h.state.bld.factory = 1;
+  h.state.landing = 'emberplain';
+  h.state.techs = { metallurgy: true, optics: true };
+  h.state.beaconsLit = { emberplain: true };
+  h.state.beaconRevisited = { emberplain: true };
+  h.state.jobs = { guard: 2 };
+  h.state.wonders = { emberplain: { found: false, outcomes: {} } };
+  h.api.definitions.WONDERS = [{ id: 'emberplain', findCost: { steel: 100, survey: 10 } }];
+  h.api.helpers.jobCapacity = id => id === 'guard' ? 2 : 0;
+  h.action('findWonder', () => {});
+  h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
+  h.autoFactory(h.api.getState(), {});
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'steel']]);
 });
 
 test('Silence accepts zero-power Factory telemetry', () => {
@@ -694,9 +719,17 @@ test('wonder handling uses the public research, obstacle, and expedition actions
 
   h.calls.length = 0;
   h.state.wonders.emberplain.expeditions[0] = true;
-  h.action('wonderObstacle', () => { h.state.wonders.emberplain.obstacles = { '0:0': true }; });
+  h.action('wonderObstacle', () => {
+    h.state.wonders.emberplain.obstacles = { '0:0': true };
+    h.state.queues.build = [{ id: 'hut' }, { id: 'wonderObstacle:emberplain:2:0' }];
+  });
+  h.action('moveQueueItem', (type, from, to) => {
+    const [entry] = h.state.queues[type].splice(from, 1);
+    h.state.queues[type].splice(to, 0, entry);
+  });
   h.autoWonderHandle(h.api.getState());
-  assert.deepEqual(h.calls, [['wonderObstacle']]);
+  assert.deepEqual(h.calls, [['wonderObstacle'], ['moveQueueItem', 'build', 1, 0]]);
+  assert.equal(h.state.queues.build[0].id, 'wonderObstacle:emberplain:2:0');
 });
 
 test('wonder handling withdraws to two workers while an obstacle is queued', () => {
