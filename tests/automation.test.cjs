@@ -724,12 +724,12 @@ test('wonder handling uses the public research, obstacle, and expedition actions
     h.state.wonders.emberplain.obstacles = { '0:0': true };
     h.state.queues.build = [{ id: 'hut' }, { id: 'wonderObstacle:emberplain:2:0' }];
   });
-  h.action('moveQueueItem', (type, from, to) => {
+  h.action('reorderQueue', (type, from, to, after) => {
     const [entry] = h.state.queues[type].splice(from, 1);
-    h.state.queues[type].splice(to, 0, entry);
+    h.state.queues[type].splice(after ? to + 1 : to, 0, entry);
   });
   h.autoWonderHandle(h.api.getState());
-  assert.deepEqual(h.calls, [['wonderObstacle'], ['moveQueueItem', 'build', 1, 0]]);
+  assert.deepEqual(h.calls, [['wonderObstacle'], ['reorderQueue', 'build', 1, 0, false]]);
   assert.equal(h.state.queues.build[0].id, 'wonderObstacle:emberplain:2:0');
 });
 
@@ -760,14 +760,14 @@ test('wonder handling promotes an obstacle that was queued before the pause', ()
   ] };
   h.state.wonders = { grayrocks: { found: true, sections: [true, true, false, false, false],
     progress: 20, researches: {}, expeditions: {}, obstacles: {} } };
-  h.action('moveQueueItem', (type, from, to) => {
+  h.action('reorderQueue', (type, from, to, after) => {
     const [entry] = h.state.queues[type].splice(from, 1);
-    h.state.queues[type].splice(to, 0, entry);
+    h.state.queues[type].splice(after ? to + 1 : to, 0, entry);
   });
 
   h.autoWonderHandle(h.api.getState());
 
-  assert.deepEqual(h.calls, [['moveQueueItem', 'build', 1, 0]]);
+  assert.deepEqual(h.calls, [['reorderQueue', 'build', 1, 0, false]]);
   assert.equal(h.state.queues.build[0].id, 'wonderObstacle:grayrocks:2:0');
 });
 

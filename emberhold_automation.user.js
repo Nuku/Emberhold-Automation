@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.5
+// @version      1.35.6
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1700,8 +1700,8 @@
     const id = queue[index].id;
     const actions = api().actions || {};
     const candidates = [
+      ['reorderQueue', ['build', index, 0, false]],
       ['moveQueueItem', ['build', index, 0]],
-      ['reorderQueue', ['build', index, 0]],
       ['prioritizeQueue', ['build', index]],
       ['moveBuildingToFront', [id]],
       ['prioritizeBuilding', [id]],
