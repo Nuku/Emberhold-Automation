@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.4
+// @version      1.35.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -870,15 +870,26 @@
       }
     }
 
+    const tinkererNeedsWood = planned.has('tinkerer') &&
+      availableJobRoom('tinkerer') > 0;
+    const preferredWoodcutterMinimum = id => {
+      if (id !== 'woodcutter' || !tinkererNeedsWood) return donorMinimum(id);
+      // Wood output is intentionally expendable while a Tinkerer seat is
+      // open; retain only one woodcutter so the village does not lose the job
+      // entirely.
+      return 1;
+    };
     const donors = Object.keys(state.jobs || {})
       .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' &&
-        (!knowledgeWorker(id) || foodEmergency) && count(id) > donorMinimum(id))
-      .sort((a, b) => count(b) - donorMinimum(b) - (count(a) - donorMinimum(a)));
+        (!knowledgeWorker(id) || foodEmergency) && count(id) > preferredWoodcutterMinimum(id))
+      .sort((a, b) => count(b) - preferredWoodcutterMinimum(b) -
+        (count(a) - preferredWoodcutterMinimum(a)) ||
+        Number(a !== 'woodcutter') - Number(b !== 'woodcutter'));
     const releases = new Map();
     let needed = Math.max(0, [...planned].reduce((sum, [, amount]) => sum + amount, 0) - available);
     for (const donor of donors) {
       if (needed <= 0) break;
-      const release = Math.min(needed, count(donor) - donorMinimum(donor));
+      const release = Math.min(needed, count(donor) - preferredWoodcutterMinimum(donor));
       if (release) releases.set(donor, release);
       needed -= release;
     }
@@ -892,7 +903,7 @@
     }
 
     for (const [id, amount] of releases) {
-      const targetCount = Math.max(donorMinimum(id), count(id) - amount);
+      const targetCount = Math.max(preferredWoodcutterMinimum(id), count(id) - amount);
       releaseWorkers(id, Math.max(0, count(id) - targetCount));
     }
     for (const [id, amount] of additions) assignWorkers(id, amount, state);
@@ -1725,6 +1736,10 @@
     // Construction workers do not need a full expedition party. Keep only a
     // small two-person foothold while an obstacle is waiting in the queue.
     if (wonderObstacleQueued(state)) {
+      // An obstacle pauses the chronicle as soon as the expedition reaches
+      // it. Queue promotion must therefore happen from this already-queued
+      // branch; waiting for wonderObstacle() would deadlock behind the pause.
+      prioritizeWonderObstacle(state);
       const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
       if (workers > 2) invoke('assignRapture', 2 - workers);
       else if (workers < 2) {

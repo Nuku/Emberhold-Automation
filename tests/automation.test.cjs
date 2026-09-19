@@ -748,6 +748,29 @@ test('wonder handling withdraws to two workers while an obstacle is queued', () 
   assert.equal(h.state.rapture.workers, 2);
 });
 
+test('wonder handling promotes an obstacle that was queued before the pause', () => {
+  const h = harness();
+  h.settings.wonderHandle = true;
+  h.state.landing = 'grayrocks';
+  h.state.jobs = { guard: 3 };
+  h.state.rapture = { landing: 'grayrocks', workers: 2 };
+  h.state.queues = { build: [
+    { type: 'build', id: 'beaconStage' },
+    { type: 'build', id: 'wonderObstacle:grayrocks:2:0' },
+  ] };
+  h.state.wonders = { grayrocks: { found: true, sections: [true, true, false, false, false],
+    progress: 20, researches: {}, expeditions: {}, obstacles: {} } };
+  h.action('moveQueueItem', (type, from, to) => {
+    const [entry] = h.state.queues[type].splice(from, 1);
+    h.state.queues[type].splice(to, 0, entry);
+  });
+
+  h.autoWonderHandle(h.api.getState());
+
+  assert.deepEqual(h.calls, [['moveQueueItem', 'build', 1, 0]]);
+  assert.equal(h.state.queues.build[0].id, 'wonderObstacle:grayrocks:2:0');
+});
+
 test('wonder handling replenishes the two-worker obstacle foothold after a loss', () => {
   const h = harness();
   h.settings.wonderHandle = true;
@@ -1853,7 +1876,7 @@ test('food deficit with a healthy stockpile does not block capped jobs', () => {
   assert.equal(h.state.jobs.tinkerer, 2);
 });
 
-test('tinkerer capacity preserves its woodcutter prerequisite', () => {
+test('tinkerer capacity can reclaim surplus woodcutters', () => {
   const h = harness();
   h.state.pop = 27;
   h.state.jobs = { forager: 3, woodcutter: 23, tinkerer: 1 };
@@ -1871,7 +1894,28 @@ test('tinkerer capacity preserves its woodcutter prerequisite', () => {
   h.autoJobs(h.api.getState(), {});
 
   assert.equal(h.state.jobs.tinkerer, 5);
-  assert.equal(h.state.jobs.woodcutter, 20);
+  assert.equal(h.state.jobs.woodcutter, 21);
+});
+
+test('understaffed tinkerers reclaim woodcutters when no citizens are idle', () => {
+  const h = harness();
+  h.state.pop = 6;
+  h.state.jobs = { forager: 1, woodcutter: 3, tinkerer: 2 };
+  h.state.res = { food: 100, wood: 1000, tools: 0 };
+  h.api.definitions.JOBS = {
+    forager: { res: 'food', base: 1 },
+    woodcutter: { res: 'wood', base: 1 },
+    tinkerer: { res: 'tools', base: 1, max: 4, unlock: () => true },
+  };
+  h.api.helpers.jobProduction = () => 1;
+  h.api.helpers.production = () => ({ food: 1, wood: 1, tools: 0 });
+  h.api.helpers.jobCapacity = id => id === 'tinkerer' ? 4 : NaN;
+  h.action('setJob', (job, total) => { h.state.jobs[job] = total; });
+
+  h.autoJobs(h.api.getState(), {});
+
+  assert.equal(h.state.jobs.tinkerer, 4);
+  assert.equal(h.state.jobs.woodcutter, 1);
 });
 
 test('stockpiled woodcutters can donate to capped knowledge jobs', () => {
