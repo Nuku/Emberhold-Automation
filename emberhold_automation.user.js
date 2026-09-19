@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.3
+// @version      1.35.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -489,19 +489,24 @@
         const producer = byOutput.get(input);
         if (!producer) continue;
         const buffer = Math.max(Number(rate) || 0, (Number(rate) || 0) * factoryCount * 10);
-        // Queued projects can reserve a large amount of a factory-made input
-        // even while its current stock is comfortably above the small
-        // immediate-production buffer. Produce that input before its consumer
-        // so the queue's demand does not leave the factory on the wrong line.
-        if ((demand[input] || 0) > stock(input) || stock(input) < buffer) {
+        if (stock(input) < buffer) {
           return inputRecipe(producer, nextSeen) || producer;
         }
       }
       return null;
     };
     const targets = goals.map(goal => inputRecipe(goal) || goal);
-    const targetIds = [...new Set(targets.map(recipe => recipe.id))].slice(0,
-      state.upgrades?.dividedAttention ? 2 : 1);
+    // Once a factory-made input has a small working buffer, prefer the
+    // explicitly requested output over continuing to stockpile that input.
+    // Otherwise a Steel goal can permanently mask an unmet Machinery goal.
+    const consumedOutputs = new Set(goals.flatMap(goal =>
+      Object.keys(goal.inputs || {}).filter(input => byOutput.has(input))));
+    const directTarget = goals.find((goal, index) => targets[index].id === goal.id &&
+      !consumedOutputs.has(goal.id)) ||
+      goals.find((goal, index) => targets[index].id === goal.id);
+    const targetIds = state.upgrades?.dividedAttention
+      ? [...new Set(targets.map(recipe => recipe.id))].slice(0, 2)
+      : [directTarget?.id || targets[0]?.id];
     const selectedIds = [...new Set(
       (Array.isArray(state.factoryRecipes) ? state.factoryRecipes : [state.factoryRecipe])
         .filter(Boolean))];

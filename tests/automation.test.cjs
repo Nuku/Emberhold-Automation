@@ -89,13 +89,14 @@ test('factories retask to produce queued outputs and their factory-made inputs',
     'Machinery must first stock the Steel its factory line consumes');
 
   h.calls.length = 0;
-  h.state.factoryRecipe = 'machinery';
+  h.state.factoryRecipe = 'steel';
   h.state.res.steel = 235;
   h.autoFactory(h.api.getState(), { steel: 384, machinery: 154 });
-  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'steel']],
-    'Queued Steel demand must take priority over the Machinery line');
+  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']],
+    'Queued Steel demand must not starve an unmet Machinery output');
 
   h.calls.length = 0;
+  h.state.factoryRecipe = 'steel';
   h.state.res.steel = 1;
   h.autoFactory(h.api.getState(), { machinery: 1 });
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']]);
