@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.2
+// @version      1.36.3
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1048,6 +1048,10 @@
     const jobs = definitions().JOBS || {};
     const siteOutput = site => {
       if (site.id === 'factory') return currentFactoryRecipe(state)?.id || 'goods';
+      // Coal Seam always produces Coal, even if telemetry omits or changes
+      // its worker/resource label. This lets the full-store shutdown rule
+      // below shed the Seam when its output is already capped.
+      if (site.id === 'coalSeam') return 'coal';
       // The game's power telemetry omits resource for the Sky Metal Forge,
       // even though it fills Aluminum storage like a direct production site.
       if (site.id === 'aluminumWorks') return 'aluminum';
