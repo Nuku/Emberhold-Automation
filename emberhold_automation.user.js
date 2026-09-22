@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.7
+// @version      1.36.2
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -25,6 +25,7 @@
     crafting: true,
     diplomacy: true,
     combat: false,
+    keepWatch: false,
     expeditions: true,
     migration: false,
     wonderStart: false,
@@ -735,7 +736,8 @@
     if (settings.diplomacy && defs.diplomat && jobUnlocked(defs.diplomat) &&
         (api()?.actions?.assignDiplomat || api()?.action)) {
       for (const [id, count] of Object.entries(state.diplomats || {})) {
-        if (count > 0 && state.diplomacy?.[id]?.disposition >= 100) {
+        const diplomacyGoal = state.techs?.longSpeech || api().helpers?.tech?.('longSpeech') === true ? 300 : 100;
+        if (count > 0 && state.diplomacy?.[id]?.disposition >= diplomacyGoal) {
           if (invoke('assignDiplomat', id, -1)) {
             pausedDiplomats[id] = (pausedDiplomats[id] || 0) + 1;
             return;
@@ -746,7 +748,8 @@
       const available = availableWorkers(state);
       if (available > 0) {
         for (const [id, count] of Object.entries(pausedDiplomats)) {
-          if (count > 0 && state.diplomacy?.[id]?.disposition < 100) {
+          const diplomacyGoal = state.techs?.longSpeech || api().helpers?.tech?.('longSpeech') === true ? 300 : 100;
+          if (count > 0 && state.diplomacy?.[id]?.disposition < diplomacyGoal) {
             if (invoke('assignDiplomat', id, 1)) {
               pausedDiplomats[id] = count - 1;
               return;
@@ -1269,8 +1272,13 @@
   function autoDiplomacy(state, demand) {
     for (const [id, entry] of Object.entries(state.diplomacy || {})) {
       if (settings.combat && (entry.hostile === true || Number(entry.disposition) < 0)) continue;
+      if (entry.conquered) continue;
+      const longSpeech = !!state.techs?.longSpeech || api().helpers?.tech?.('longSpeech') === true;
+      if (longSpeech && Number(entry.disposition) >= 300 && affordable({ currency: 1500 }, state, demand)) {
+        if (invoke('conquer', id)) return;
+      }
       const request = entry.request;
-      if (entry.disposition >= 100) continue;
+      if (entry.disposition >= (longSpeech ? 300 : 100)) continue;
       if (request && affordable({ [request.res]: request.amount }, state, demand)) {
         const previousAction = lastAction;
         if (invoke('supplyDiplomacyRequest', id)) return;
@@ -1278,6 +1286,26 @@
         // stages with a permanent "No change" status.
         lastAction = previousAction;
       }
+    }
+  }
+
+  function autoUniteRegion(state) {
+    if (state.unifiedRegion) return;
+    const partners = Array.isArray(state.tradePartners) ? state.tradePartners :
+      (state.tradePartner ? [state.tradePartner] : []);
+    const conquered = [...new Set(partners.filter(Boolean))];
+    if (conquered.length !== 3 || !conquered.every(id => state.diplomacy?.[id]?.conquered)) return;
+    if (api()?.actions?.uniteRegion || api()?.actions?.['unite-region']) {
+      if (invoke(api().actions.uniteRegion ? 'uniteRegion' : 'unite-region')) return;
+    }
+    const button = document.querySelector?.('button[data-action="unite-region"]');
+    if (!button || button.disabled) return;
+    try {
+      button.click();
+      if (snapshot()?.unifiedRegion) lastAction = 'Unite Region';
+    } catch (error) {
+      lastAction = `Error in unite-region: ${error?.message || error}`;
+      console.error('[Emberhold Automation]', lastAction, error);
     }
   }
 
@@ -1470,6 +1498,14 @@
     return { minimum: 2, maximum: capacity, healthy: Math.max(0, guards - injuries) };
   }
 
+  function keepWatchReserve(state) {
+    if (!settings.keepWatch) return 0;
+    const landing = (definitions().LANDINGS || []).find(item => item.id === state?.landing);
+    if (!landing?.postWaters) return 0;
+    const danger = Number(state.malformedDanger);
+    return Number.isFinite(danger) ? Math.max(0, Math.ceil(danger)) : 0;
+  }
+
   function guardRecoveryNeeded(state, limits) {
     const injuries = Number(state.guardInjuries ?? state.combat?.guardInjuries ?? state.military?.guardInjuries);
     const healthy = Math.max(0, Number(limits.healthy) || 0);
@@ -1591,6 +1627,8 @@
     }
 
     const limits = guardLimits(state);
+    const watchReserve = keepWatchReserve(state);
+    limits.healthy = Math.max(0, limits.healthy - watchReserve);
     const healthy = limits.healthy;
     const capacity = limits.maximum;
     if (guardRecoveryNeeded(state, limits)) return;
@@ -1853,6 +1891,7 @@
         ['power', autoFactory], ['power', autoWoodFuel], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
+        ['diplomacy', autoUniteRegion],
         ['migration', autoMigration],
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
@@ -2262,7 +2301,7 @@
             ['enabled', 'Enabled'], ['jobs', 'Jobs'], ['research', 'Research'],
             ['buildings', 'Buildings'], ['crafting', 'Crafting'], ['power', 'Power'],
             ['diplomacy', 'Diplomacy'], ['expeditions', 'Expeditions'],
-            ['migration', 'Migration'], ['combat', 'Combat'], ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
+            ['migration', 'Migration'], ['combat', 'Combat'], ['keepWatch', 'Keep Watch'], ['wonderStart', 'Start Wonders'], ['wonderHandle', 'Handle Wonders'],
           ].map(([id, label]) => settingInput(id, label)).join('')}</div>
           <div class="ea-status" data-status>Waiting for Emberhold</div>
         </div></details>
