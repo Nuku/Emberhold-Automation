@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.35.6
+// @version      1.35.7
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1087,7 +1087,6 @@
       // Factories produce their selected recipe, while dig sites produce their
       // reported resource.
       const output = resource;
-      if (site.id === 'factory') return 1;
       const stock = state.res[resource] || 0;
       const capacity = api().helpers?.capacityOf?.(resource);
       // A full store does not need replacement production, even when queued
@@ -1095,6 +1094,10 @@
       // store fall below capacity before re-enabling the site.
       if (Number.isFinite(capacity) && stock >= capacity) return 0;
       if ((demand[output] || 0) > 0) return 3;
+      // A selected Factory recipe is still subject to queued demand and stock
+      // shortages, just like other powered production sites. Returning its
+      // ordinary priority here strands queued Factory outputs without power.
+      if (site.id === 'factory') return 1;
       // Compare the rate without this site's boost, so powering a shortage
       // does not immediately demote it on the next automation tick.
       let baseline = rates[resource] || 0;
