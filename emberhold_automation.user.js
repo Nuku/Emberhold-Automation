@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.4
+// @version      1.36.5
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -647,12 +647,19 @@
     const rawRates = api().helpers?.production?.(1) || {};
     const rates = Object.fromEntries(Object.entries(rawRates)
       .map(([resource, rate]) => [resource, Number(rate)]));
+    const capacityOf = api().helpers?.capacityOf;
+    const reserve = resource => {
+      if (resource === 'knowledge' || resource === 'currency') return 100;
+      const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
+      return Number.isFinite(cap) ? Math.max(10, Math.ceil(cap * 0.5)) : 10;
+    };
     // production() already includes all upkeep. Feed the village before queue
     // reserves or diplomacy: a demanded job must still be able to donate.
     const foodRate = Number.isFinite(rates.food) ? rates.food : 0;
     const foodWorkerRate = Number(effectiveJobRate?.('forager') ?? defs.forager?.base ?? 0);
     const foodBuffer = (state.res.food || 0) <= 0 ? foodWorkerRate * 0.25 : 0;
-    const foodEmergency = stock('food') <= 0;
+    const idleFoodTarget = idleHands && stock('food') < reserve('food') ? foodWorkerRate : 0;
+    const foodEmergency = stock('food') <= 0 || (idleHands && foodRate < idleFoodTarget);
     // Exploration is optional while the village is starving. Reclaim those
     // workers before calculating the food deficit; the normal explorer-start
     // path can send one back out once the emergency has cleared.
@@ -680,12 +687,6 @@
       return;
     }
     const currencyTarget = Math.max(100, Math.ceil((demand.currency || 0) * 0.10));
-    const capacityOf = api().helpers?.capacityOf;
-    const reserve = resource => {
-      if (resource === 'knowledge' || resource === 'currency') return 100;
-      const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
-      return Number.isFinite(cap) ? Math.max(10, Math.ceil(cap * 0.5)) : 10;
-    };
     const needsWork = id => {
       const resource = defs[id]?.res;
       if (!resource) return true;
@@ -918,6 +919,28 @@
     }
     for (const [id, amount] of additions) assignWorkers(id, amount, state);
 
+    // With Idle Hands, food production comes from unassigned villagers. Make
+    // that workforce explicit: release ordinary workers until live food
+    // production reaches balance (or a small surplus while stores are low).
+    let idleFoodRate = foodRate;
+    if (idleHands) {
+      const liveFoodRate = () => Number(api().helpers?.production?.(1)?.food);
+      idleFoodRate = liveFoodRate();
+      for (let released = 0; idleFoodRate < idleFoodTarget && released < state.pop; released++) {
+        const jobs = snapshot()?.jobs || {};
+        const donor = Object.keys(jobs)
+          .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' &&
+            jobCount(id) > preferredWoodcutterMinimum(id))
+          .sort((a, b) => jobCount(b) - preferredWoodcutterMinimum(b) -
+            (jobCount(a) - preferredWoodcutterMinimum(a)) ||
+            Number(a !== 'woodcutter') - Number(b !== 'woodcutter'))[0];
+        if (!donor) break;
+        const before = jobCount(donor);
+        if (!releaseWorkers(donor, 1) || jobCount(donor) >= before) break;
+        idleFoodRate = liveFoodRate();
+      }
+    }
+
     // A healthy, well-stocked food store makes excess foragers ordinary
     // donors. Release them before fallback staffing so idle villagers do not
     // hide this opportunity and leave the workforce permanently overfed.
@@ -930,7 +953,7 @@
     }
     const remainingWorkers = availableWorkers(snapshot());
     let filledFallback = false;
-    if (remainingWorkers > 0 && !(foodEmergency && idleHands)) {
+    if (remainingWorkers > 0 && !(idleHands && idleFoodRate < idleFoodTarget)) {
       const fallback = assignable
         .filter(id => {
           if (id === 'forager' && idleHands) return false;
