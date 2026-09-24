@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.7
+// @version      1.36.8
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -937,9 +937,8 @@
         const jobs = snapshot()?.jobs || {};
         const donor = Object.keys(jobs)
           .filter(id => defs[id] && !defs[id].targeted && id !== 'guard' &&
-            jobCount(id) > preferredWoodcutterMinimum(id))
-          .sort((a, b) => jobCount(b) - preferredWoodcutterMinimum(b) -
-            (jobCount(a) - preferredWoodcutterMinimum(a)) ||
+            !coalReserveActive(id) && jobCount(id) > 0)
+          .sort((a, b) => jobCount(b) - jobCount(a) ||
             Number(a !== 'woodcutter') - Number(b !== 'woodcutter'))[0];
         if (!donor) break;
         const before = jobCount(donor);
