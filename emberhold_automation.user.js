@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.8
+// @version      1.36.9
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -959,7 +959,7 @@
     }
     const remainingWorkers = availableWorkers(snapshot());
     let filledFallback = false;
-    if (remainingWorkers > 0 && !(idleHands && idleFoodRate < idleFoodTarget)) {
+    if (remainingWorkers > 0 && !(idleHands && foodRatio < 0.8)) {
       const fallback = assignable
         .filter(id => {
           if (id === 'forager' && idleHands) return false;
