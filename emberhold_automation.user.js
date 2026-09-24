@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.5
+// @version      1.36.6
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -658,8 +658,14 @@
     const foodRate = Number.isFinite(rates.food) ? rates.food : 0;
     const foodWorkerRate = Number(effectiveJobRate?.('forager') ?? defs.forager?.base ?? 0);
     const foodBuffer = (state.res.food || 0) <= 0 ? foodWorkerRate * 0.25 : 0;
-    const idleFoodTarget = idleHands && stock('food') < reserve('food') ? foodWorkerRate : 0;
-    const foodEmergency = stock('food') <= 0 || (idleHands && foodRate < idleFoodTarget);
+    const foodCapacity = typeof capacityOf === 'function' ? Number(capacityOf('food')) : NaN;
+    const foodRatio = Number.isFinite(foodCapacity) && foodCapacity > 0
+      ? Math.max(0, Number(state.res.food || 0) / foodCapacity)
+      : (stock('food') <= 0 ? 0 : stock('food') >= reserve('food') * 1.6 ? 0.8 : 0.5);
+    const idleFoodTarget = !idleHands || foodRatio >= 0.8 ? -Infinity
+      : foodRatio < 0.25 ? Math.max(foodWorkerRate * 2, -foodRate * 0.25) : 0;
+    const foodEmergency = stock('food') <= 0 ||
+      (idleHands && foodRatio < 0.8 && foodRate < idleFoodTarget);
     // Exploration is optional while the village is starving. Reclaim those
     // workers before calculating the food deficit; the normal explorer-start
     // path can send one back out once the emergency has cleared.
