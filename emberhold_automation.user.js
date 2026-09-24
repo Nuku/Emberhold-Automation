@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.3
+// @version      1.36.4
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -621,13 +621,20 @@
     const productive = id => effectiveJobRate
       ? Number(effectiveJobRate(id)) > 0
       : Number(defs[id].base) > 0;
-    const assignable = jobOrder.filter(id => id !== 'guard' && !defs[id].targeted &&
+    const idleHands = idleHandsActive(state);
+    const assignable = jobOrder.filter(id => id !== 'guard' &&
+      !(id === 'forager' && idleHands) && !defs[id].targeted &&
       defs[id].res && jobUnlocked(defs[id]) &&
       (id === 'tinkerer' || productive(id)));
 
     const count = id => Number(state.jobs?.[id] || 0);
     const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
-    const idleHands = idleHandsActive(state);
+    // Idle Hands turns every unassigned villager into a Forager. Clear any
+    // dedicated Foragers and keep that job out of every planning path below.
+    if (idleHands && count('forager') > 0) {
+      releaseWorkers('forager', count('forager'));
+      state = snapshot();
+    }
     const minimums = [
       // Idle Hands makes an unassigned villager produce at Forager rate, so a
       // dedicated Forager is unnecessary unless every population slot is in
@@ -636,7 +643,7 @@
       ['woodcutter', 1],
       ['miner', state.pop >= 6 ? 1 : 0],
       ['thinker', state.pop >= 8 ? 1 : 0],
-    ];
+    ].filter(([id]) => !(id === 'forager' && idleHands));
     const rawRates = api().helpers?.production?.(1) || {};
     const rates = Object.fromEntries(Object.entries(rawRates)
       .map(([resource, rate]) => [resource, Number(rate)]));
@@ -716,7 +723,7 @@
       (!needsWork(id) || (effectiveJobRate && effectiveJobRate(id) <= 0)
         ? 0 : minimums.find(item => item[0] === id)?.[1] || 0));
     const needs = [
-      ['forager', 'food', reserve('food')],
+      ...(!idleHands ? [['forager', 'food', reserve('food')]] : []),
       ['woodcutter', 'wood', reserve('wood')],
       ['miner', 'stone', reserve('stone')],
       ['thinker', 'knowledge', reserve('knowledge')],
@@ -923,7 +930,7 @@
     }
     const remainingWorkers = availableWorkers(snapshot());
     let filledFallback = false;
-    if (remainingWorkers > 0) {
+    if (remainingWorkers > 0 && !(foodEmergency && idleHands)) {
       const fallback = assignable
         .filter(id => {
           if (id === 'forager' && idleHands) return false;
@@ -1789,7 +1796,7 @@
       if (workers > 2) invoke('assignRapture', 2 - workers);
       else if (workers < 2) {
         const jobDefs = definitions().JOBS || {};
-        const donorMinimum = id => id === 'forager' ? 1 : 0;
+        const donorMinimum = id => id === 'forager' && !idleHandsActive(state) ? 1 : 0;
         const workingOnDemand = id => {
           const resource = jobDefs[id]?.res;
           return !!resource && Number(demand[resource] || 0) > 0;
@@ -1847,7 +1854,7 @@
     // Rapture workers are villagers, not Guards. If all villagers are already
     // assigned, reclaim ordinary production seats before sending them in.
     const jobDefs = definitions().JOBS || {};
-    const donorMinimum = id => id === 'forager' ? 1 : 0;
+    const donorMinimum = id => id === 'forager' && !idleHandsActive(state) ? 1 : 0;
     const workingOnDemand = id => {
       const resource = jobDefs[id]?.res;
       return !!resource && Number(demand[resource] || 0) > 0;
