@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.9
+// @version      1.36.10
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -648,9 +648,11 @@
     const rates = Object.fromEntries(Object.entries(rawRates)
       .map(([resource, rate]) => [resource, Number(rate)]));
     const capacityOf = api().helpers?.capacityOf;
+    const overflowTrial = state.trial?.id === 'overflow';
     const reserve = resource => {
-      if (resource === 'knowledge' || resource === 'currency') return 100;
       const cap = typeof capacityOf === 'function' ? capacityOf(resource) : Infinity;
+      if (overflowTrial && Number.isFinite(cap)) return Math.max(0, Math.ceil(cap));
+      if (resource === 'knowledge' || resource === 'currency') return 100;
       return Number.isFinite(cap) ? Math.max(10, Math.ceil(cap * 0.5)) : 10;
     };
     // production() already includes all upkeep. Feed the village before queue
@@ -662,10 +664,12 @@
     const foodRatio = Number.isFinite(foodCapacity) && foodCapacity > 0
       ? Math.max(0, Number(state.res.food || 0) / foodCapacity)
       : (stock('food') <= 0 ? 0 : stock('food') >= reserve('food') * 1.6 ? 0.8 : 0.5);
-    const idleFoodTarget = !idleHands || foodRatio >= 0.8 ? -Infinity
-      : foodRatio < 0.25 ? Math.max(foodWorkerRate * 2, -foodRate * 0.25) : 0;
+    const foodTargetRatio = overflowTrial ? 1 : 0.8;
+    const idleFoodTarget = !idleHands || foodRatio >= foodTargetRatio ? -Infinity
+      : overflowTrial ? Math.max(foodWorkerRate * 2, -foodRate * 0.25)
+        : foodRatio < 0.25 ? Math.max(foodWorkerRate * 2, -foodRate * 0.25) : 0;
     const foodEmergency = stock('food') <= 0 ||
-      (idleHands && foodRatio < 0.8 && foodRate < idleFoodTarget);
+      (idleHands && foodRatio < foodTargetRatio && foodRate < idleFoodTarget);
     // Exploration is optional while the village is starving. Reclaim those
     // workers before calculating the food deficit; the normal explorer-start
     // path can send one back out once the emergency has cleared.
@@ -959,7 +963,7 @@
     }
     const remainingWorkers = availableWorkers(snapshot());
     let filledFallback = false;
-    if (remainingWorkers > 0 && !(idleHands && foodRatio < 0.8)) {
+    if (remainingWorkers > 0 && !(idleHands && foodRatio < foodTargetRatio)) {
       const fallback = assignable
         .filter(id => {
           if (id === 'forager' && idleHands) return false;
