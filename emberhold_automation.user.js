@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.14
+// @version      1.36.15
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1100,12 +1100,20 @@
       if (Number.isFinite(site.enabled) && site.enabled > 0 && Number.isFinite(site.requested)) {
         return site.requested / site.enabled;
       }
+      // The game reports zero-power, disabled factories without a unit cost
+      // on some saves. The planner still needs the known factory cost to
+      // budget enabling them; otherwise one missing field skips all power
+      // allocation and queued Factory production never starts.
+      if (site.id === 'factory' && !factoryWithoutPower(state)) {
+        return FACTORY_POWER_REQUIREMENT;
+      }
+      if (site.id === 'factory' && factoryWithoutPower(state)) return 0;
       return NaN;
     };
-    const sites = Object.entries(power.buildings).map(([id, raw]) => [id, {
-      ...raw,
-      powerPerBuilding: powerCost(raw),
-    }]);
+    const sites = Object.entries(power.buildings).map(([id, raw]) => {
+      const site = { ...raw, id };
+      return [id, { ...site, powerPerBuilding: powerCost(site) }];
+    });
     const unsupported = sites.filter(([id, site]) =>
       !['enabled', 'used', 'powerPerBuilding'].every(key => Number.isFinite(site[key])) ||
       site.powerPerBuilding < 0);
