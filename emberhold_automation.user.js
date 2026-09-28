@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.11
+// @version      1.36.12
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2032,19 +2032,6 @@
       .find(node => node && !['BUTTON', 'A'].includes(node.tagName)) || null;
   }
 
-  function makeSidebarScrollable(host) {
-    let node = host;
-    for (let depth = 0; node && node !== document.body && depth < 5; depth++, node = node.parentElement) {
-      const style = window.getComputedStyle?.(node);
-      const clipped = style && ['hidden', 'clip'].includes(style.overflowY);
-      if (clipped || node.scrollHeight > node.clientHeight) {
-        node.classList.add('ea-scroll-host');
-        node.style.overflowY = 'auto';
-        node.style.maxHeight = `calc(100vh - ${Math.max(8, Math.round(node.getBoundingClientRect().top))}px)`;
-      }
-    }
-  }
-
   function watchGamePanels() {
     if (typeof MutationObserver === 'undefined' || !document.body || document.body.dataset.eaObserved) return;
     document.body.dataset.eaObserved = 'true';
@@ -2390,10 +2377,6 @@
 
   function makePanel() {
     const host = panelHost();
-    if (host !== document.body) {
-      host.classList.add('ea-scroll-host');
-      makeSidebarScrollable(host);
-    }
     let panel = document.getElementById('emberhold-automation');
     if (!panel) {
       if (!document.getElementById('emberhold-automation-style')) {
@@ -2401,7 +2384,6 @@
         style.id = 'emberhold-automation-style';
         style.textContent = `
           #emberhold-automation { margin: .75rem 0; width: 100%; box-sizing: border-box; }
-          .ea-scroll-host { overflow-y: auto !important; max-height: 100vh; }
           #emberhold-automation details { margin: .25rem 0; }
           #emberhold-automation summary { cursor: pointer; font-weight: 600; }
           #emberhold-automation .ea-body { display: grid; gap: .45rem; padding: .45rem 0; }
@@ -2542,17 +2524,11 @@
         reader.readAsText(file);
       });
       moveDetailedSettings(panel);
-      makeSidebarScrollable(gameSettingsHost());
-      makeSidebarScrollable(host);
     } else if (panel.parentElement !== host && host !== document.body) {
       host.appendChild(panel);
       moveDetailedSettings(panel);
-      makeSidebarScrollable(gameSettingsHost());
-      makeSidebarScrollable(host);
     } else {
       moveDetailedSettings(panel);
-      makeSidebarScrollable(gameSettingsHost());
-      makeSidebarScrollable(host);
     }
     return panel;
   }
