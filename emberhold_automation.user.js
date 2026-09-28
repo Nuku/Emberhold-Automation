@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.19
+// @version      1.36.20
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -98,6 +98,12 @@
     restart();
     const panel = document.getElementById('emberhold-automation');
     if (panel) refreshSettingInputs(panel);
+    const detail = detailedSettingsNode || panel?.querySelector('.ea-settings');
+    if (detail) {
+      refreshSettingInputs(detail);
+      for (const type of ['build', 'research']) refreshQueueList(detail, type);
+      refreshTriggers(detail);
+    }
     return 'Settings imported';
   }
 
@@ -2569,25 +2575,26 @@
       host.appendChild(panel);
       wireSettingInputs(panel);
       wireUiDetails(panel);
-      wireQueueControls(panel);
-      wireTriggerControls(panel);
-      const text = panel.querySelector('[data-settings-text]');
-      panel.querySelector('[data-export]').addEventListener('click', () => {
+      const detail = panel.querySelector('.ea-settings');
+      wireQueueControls(detail);
+      wireTriggerControls(detail);
+      const text = detail.querySelector('[data-settings-text]');
+      detail.querySelector('[data-export]').addEventListener('click', () => {
         text.value = exportSettings();
         text.select();
         navigator.clipboard?.writeText(text.value).catch(() => {});
       });
-      panel.querySelector('[data-download]').addEventListener('click', downloadSettings);
-      panel.querySelector('[data-import]').addEventListener('click', () => {
-        panel.querySelector('[data-import-status]').textContent = importSettings(text.value);
+      detail.querySelector('[data-download]').addEventListener('click', downloadSettings);
+      detail.querySelector('[data-import]').addEventListener('click', () => {
+        detail.querySelector('[data-import-status]').textContent = importSettings(text.value);
       });
-      panel.querySelector('[data-import-file]').addEventListener('change', event => {
+      detail.querySelector('[data-import-file]').addEventListener('change', event => {
         const file = event.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = () => {
           text.value = String(reader.result || '');
-          panel.querySelector('[data-import-status]').textContent = importSettings(text.value);
+          detail.querySelector('[data-import-status]').textContent = importSettings(text.value);
         };
         reader.readAsText(file);
       });
