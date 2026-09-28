@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.13
+// @version      1.36.14
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -508,15 +508,11 @@
     const targets = goals.map(goal => inputRecipe(goal) || goal);
     const canProduce = recipe => Object.entries(recipe.inputs || {}).every(([input, amount]) =>
       stock(input) >= (Number(amount) || 0));
-    // Once a factory-made input has a small working buffer, prefer the
-    // explicitly requested output over continuing to stockpile that input.
-    // Otherwise a Steel goal can permanently mask an unmet Machinery goal.
-    const consumedOutputs = new Set(goals.flatMap(goal =>
-      Object.keys(goal.inputs || {}).filter(input => byOutput.has(input))));
     const runnableTargets = targets.filter(canProduce);
-    const directTarget = goals.find((goal, index) => canProduce(targets[index]) &&
-      targets[index].id === goal.id && !consumedOutputs.has(goal.id)) ||
-      goals.find((goal, index) => canProduce(targets[index]) && targets[index].id === goal.id);
+    // Preserve direct queue goals even when another requested output consumes
+    // them. A buffer is enough only when Steel is an input, not when queued
+    // work independently still needs Steel.
+    const directTarget = goals.find((goal, index) => canProduce(targets[index]));
     const targetIds = state.upgrades?.dividedAttention
       ? [...new Set(runnableTargets.map(recipe => recipe.id))].slice(0, 2)
       : [directTarget?.id || runnableTargets[0]?.id].filter(Boolean);
