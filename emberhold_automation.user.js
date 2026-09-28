@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.12
+// @version      1.36.13
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -481,6 +481,13 @@
     }
     if (!goals.length) return;
 
+    // Follow queue demand order instead of the static recipe list. Queue demand
+    // is an insertion-ordered resource map, so its order carries the planner's
+    // requested priority when multiple factory outputs are short.
+    const demandOrder = new Map(Object.keys(demand).map((id, index) => [id, index]));
+    goals.sort((a, b) => (demandOrder.get(a.id) ?? Infinity) -
+      (demandOrder.get(b.id) ?? Infinity));
+
     // A Factory has one shared line. When the requested output consumes a
     // factory-made component (Machinery -> Steel), make a small input buffer
     // first so switching to the final line produces immediately.
@@ -499,17 +506,21 @@
       return null;
     };
     const targets = goals.map(goal => inputRecipe(goal) || goal);
+    const canProduce = recipe => Object.entries(recipe.inputs || {}).every(([input, amount]) =>
+      stock(input) >= (Number(amount) || 0));
     // Once a factory-made input has a small working buffer, prefer the
     // explicitly requested output over continuing to stockpile that input.
     // Otherwise a Steel goal can permanently mask an unmet Machinery goal.
     const consumedOutputs = new Set(goals.flatMap(goal =>
       Object.keys(goal.inputs || {}).filter(input => byOutput.has(input))));
-    const directTarget = goals.find((goal, index) => targets[index].id === goal.id &&
-      !consumedOutputs.has(goal.id)) ||
-      goals.find((goal, index) => targets[index].id === goal.id);
+    const runnableTargets = targets.filter(canProduce);
+    const directTarget = goals.find((goal, index) => canProduce(targets[index]) &&
+      targets[index].id === goal.id && !consumedOutputs.has(goal.id)) ||
+      goals.find((goal, index) => canProduce(targets[index]) && targets[index].id === goal.id);
     const targetIds = state.upgrades?.dividedAttention
-      ? [...new Set(targets.map(recipe => recipe.id))].slice(0, 2)
-      : [directTarget?.id || targets[0]?.id];
+      ? [...new Set(runnableTargets.map(recipe => recipe.id))].slice(0, 2)
+      : [directTarget?.id || runnableTargets[0]?.id].filter(Boolean);
+    if (!targetIds.length) return;
     const selectedIds = [...new Set(
       (Array.isArray(state.factoryRecipes) ? state.factoryRecipes : [state.factoryRecipe])
         .filter(Boolean))];
