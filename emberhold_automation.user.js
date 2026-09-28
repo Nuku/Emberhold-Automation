@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.17
+// @version      1.36.18
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2084,7 +2084,14 @@
   function watchGamePanels() {
     if (typeof MutationObserver === 'undefined' || !document.body || document.body.dataset.eaObserved) return;
     document.body.dataset.eaObserved = 'true';
-    const observer = new MutationObserver(() => makePanel());
+    const observer = new MutationObserver(() => {
+      const panel = document.getElementById('emberhold-automation');
+      const host = panelHost();
+      const settingsHost = gameSettingsHost();
+      const panelNeedsMount = !panel?.isConnected || (host !== document.body && panel.parentElement !== host);
+      const settingsNeedMount = detailedSettingsNode && settingsHost && !settingsHost.contains(detailedSettingsNode);
+      if (panelNeedsMount || settingsNeedMount) makePanel();
+    });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
