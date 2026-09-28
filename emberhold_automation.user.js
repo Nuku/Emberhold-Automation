@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.15
+// @version      1.36.16
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1172,6 +1172,11 @@
       return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
     };
     const siteLimit = site => {
+      // Disabled factories may omit both capacity and built-count fields from
+      // power telemetry. The main game state still reports the actual count.
+      if (site.id === 'factory') {
+        return Math.max(0, Math.floor(Number(state.bld?.factory) || 0));
+      }
       // `capacity` is the currently active power capacity, not the maximum
       // number of workers. Dig sites expose their actual worker limit directly;
       // other power buildings still use their live built count.
