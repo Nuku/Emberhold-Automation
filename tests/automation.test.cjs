@@ -77,6 +77,7 @@ test('factories retask to produce queued outputs and their factory-made inputs',
   h.state.bld.factory = 1;
   h.state.techs = { craftsmanship: true, metallurgy: true, machineryTech: true };
   h.state.factoryRecipe = 'goods';
+  h.state.res = { wood: 100, iron: 100, coal: 100 };
   h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
 
   h.autoFactory(h.api.getState(), { tools: 1 });
@@ -92,8 +93,8 @@ test('factories retask to produce queued outputs and their factory-made inputs',
   h.state.factoryRecipe = 'steel';
   h.state.res.steel = 235;
   h.autoFactory(h.api.getState(), { steel: 384, machinery: 154 });
-  assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'machinery']],
-    'Queued Steel demand must not starve an unmet Machinery output');
+  assert.deepEqual(h.calls, [],
+    'The first queued output remains Steel while its own demand is unmet');
 
   h.calls.length = 0;
   h.state.factoryRecipe = 'steel';
@@ -108,6 +109,7 @@ test('Divided Attention reconciles both selected factory outputs', () => {
   h.state.upgrades = { dividedAttention: 1 };
   h.state.techs = { craftsmanship: true, metallurgy: true, machineryTech: true };
   h.state.factoryRecipes = ['goods', 'tools'];
+  h.state.res = { wood: 100, iron: 100, coal: 100 };
   h.action('chooseFactoryRecipe', id => {
     const selected = h.state.factoryRecipes;
     const index = selected.indexOf(id);
@@ -140,6 +142,7 @@ test('Silence lets Tinkerers select factory recipes before a Factory is built', 
   const h = harness();
   h.state.wonders = { worldAnvil: { fate: 'silence' } };
   h.state.techs = { craftsmanship: true };
+  h.state.res.wood = 100;
   h.action('chooseFactoryRecipe', id => { h.state.factoryRecipe = id; });
   h.autoFactory(h.api.getState(), { tools: 1 });
   assert.deepEqual(h.calls, [['chooseFactoryRecipe', 'tools']]);
@@ -147,6 +150,7 @@ test('Silence lets Tinkerers select factory recipes before a Factory is built', 
 
 test('factory planning includes a pending Wonder discovery cost', () => {
   const h = harness();
+  h.state.res = { iron: 100, coal: 100 };
   h.settings.wonderStart = true;
   h.state.bld.factory = 1;
   h.state.landing = 'emberplain';

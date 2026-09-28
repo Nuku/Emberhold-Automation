@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.16
+// @version      1.36.17
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -192,21 +192,39 @@
       research: definitions().TECHS || [],
       expedition: definitions().EXPEDITIONS || [],
     };
+    const knownCosts = {};
+    let unresolvedHead = false;
     for (const type of Object.keys(definitionsByType)) {
-      const entry = state.queues?.[type]?.[0];
-      if (!entry) continue;
-      // Beacon/air-control progress uses synthetic queue ids while its cost
-      // still comes from the corresponding building definition.
-      const definitionId = type === 'build' && /Stage$/.test(entry.id)
-        ? entry.id.replace(/Stage$/, '') : entry.id;
-      const def = definitionsByType[type].find(item => item.id === definitionId);
-      const cost = api().helpers?.queueCost?.(entry) ?? (type === 'build'
-        ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry.cost
-        : type === 'research'
-          ? (def ? researchCost(def) : entry.cost)
-          : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
-      for (const [resource, amount] of Object.entries(cost || {})) {
-        gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+      for (const [index, entry] of (state.queues?.[type] || []).entries()) {
+        // Beacon/air-control progress uses synthetic queue ids while its cost
+        // still comes from the corresponding building definition.
+        const definitionId = type === 'build' && /Stage$/.test(entry.id)
+          ? entry.id.replace(/Stage$/, '') : entry.id;
+        const def = definitionsByType[type].find(item => item.id === definitionId);
+        const cost = api().helpers?.queueCost?.(entry) ?? (type === 'build'
+          ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry.cost
+          : type === 'research'
+            ? (def ? researchCost(def) : entry.cost)
+            : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
+        if (!cost) {
+          if (index === 0) unresolvedHead = true;
+          continue;
+        }
+        for (const [resource, amount] of Object.entries(cost)) {
+          knownCosts[resource] = (knownCosts[resource] || 0) + amount;
+          if (index === 0) gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+        }
+      }
+    }
+    // Older APIs expose aggregate queueDemand but no queueCost or definitions
+    // for synthetic Wonder obstacles. Recover their costs from the aggregate
+    // after removing every resolved entry, including deferred queue items.
+    // If several entries are unknown, conservatively reserve their combined
+    // remainder rather than silently starving an unresolved head item.
+    if (unresolvedHead) {
+      for (const [resource, amount] of Object.entries(api().helpers?.queueDemand?.() || {})) {
+        const remainder = Math.max(0, amount - (knownCosts[resource] || 0));
+        if (remainder) gameDemand[resource] = (gameDemand[resource] || 0) + remainder;
       }
     }
     return mergeDemand(mergeDemand(gameDemand, ownQueueDemand(state)), migrationDemand(state));
@@ -505,14 +523,15 @@
       }
       return null;
     };
-    const targets = goals.map(goal => inputRecipe(goal) || goal);
     const canProduce = recipe => Object.entries(recipe.inputs || {}).every(([input, amount]) =>
       stock(input) >= (Number(amount) || 0));
+    const targets = goals.map(goal => state.upgrades?.dividedAttention && canProduce(goal)
+      ? goal : inputRecipe(goal) || goal);
     const runnableTargets = targets.filter(canProduce);
     // Preserve direct queue goals even when another requested output consumes
     // them. A buffer is enough only when Steel is an input, not when queued
     // work independently still needs Steel.
-    const directTarget = goals.find((goal, index) => canProduce(targets[index]));
+    const directTarget = targets.find(canProduce);
     const targetIds = state.upgrades?.dividedAttention
       ? [...new Set(runnableTargets.map(recipe => recipe.id))].slice(0, 2)
       : [directTarget?.id || runnableTargets[0]?.id].filter(Boolean);
@@ -526,15 +545,25 @@
     // otherwise a stale second recipe can consume half of the factories and
     // starve the newly requested output.
     if (state.upgrades?.dividedAttention) {
+      // Establish a desired output before removing the last old selection;
+      // the game refuses to deselect its sole remaining recipe.
+      if (!selectedIds.some(id => targetIds.includes(id))) {
+        if (selectedIds.length >= 2) {
+          if (!invoke('chooseFactoryRecipe', selectedIds[0])) return;
+          selectedIds.shift();
+        }
+        if (!invoke('chooseFactoryRecipe', targetIds[0])) return;
+        selectedIds.push(targetIds[0]);
+      }
       for (const id of selectedIds) {
         if (!targetIds.includes(id) && selectedIds.length > 1) {
-          invoke('chooseFactoryRecipe', id);
+          if (!invoke('chooseFactoryRecipe', id)) return;
           selectedIds.splice(selectedIds.indexOf(id), 1);
         }
       }
       for (const id of targetIds) {
         if (!selectedIds.includes(id) && selectedIds.length < 2) {
-          invoke('chooseFactoryRecipe', id);
+          if (!invoke('chooseFactoryRecipe', id)) return;
           selectedIds.push(id);
         }
       }
@@ -1172,10 +1201,10 @@
       return Object.values(jobs).find(job => job.poweredBuilding === site.id)?.res;
     };
     const siteLimit = site => {
-      // Disabled factories may omit both capacity and built-count fields from
-      // power telemetry. The main game state still reports the actual count.
-      if (site.id === 'factory') {
-        return Math.max(0, Math.floor(Number(state.bld?.factory) || 0));
+      // These controls count buildings, even when a building supports a job
+      // with more worker slots (e.g. two Aluminum Works and five workers).
+      if (['factory', 'livingBlock', 'aluminumWorks', 'forge'].includes(site.id)) {
+        return Math.max(0, Math.floor(Number(site.built ?? state.bld?.[site.id]) || 0));
       }
       // `capacity` is the currently active power capacity, not the maximum
       // number of workers. Dig sites expose their actual worker limit directly;
