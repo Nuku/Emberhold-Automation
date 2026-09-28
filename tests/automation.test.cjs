@@ -10,8 +10,19 @@ function harness() {
     diplomacy: {}, techs: {}, bld: {}, expeditions: {}, queues: {} };
   const calls = [];
   const api = { getState: () => structuredClone(state), definitions: {}, helpers: {}, actions: {} };
+  // Planner tests start with the automation panel already mounted. Model the
+  // DOM methods used when a tick finds that panel and refreshes its status.
+  const body = { dataset: {} };
+  const status = { textContent: '', title: '' };
+  const panel = { parentElement: body, querySelector: () => null };
+  const document = {
+    body,
+    getElementById: id => id === 'emberhold-automation' ? panel : null,
+    querySelector: selector => selector === '#emberhold-automation [data-status]' ? status : null,
+    querySelectorAll: () => [],
+  };
   const context = vm.createContext({ window: { emberhold: api }, console,
-    localStorage: { getItem: () => null }, document: { querySelector: () => null } });
+    localStorage: { getItem: () => null }, document });
   vm.runInContext(source.replace('  boot();', `
     window.test = { settings, invoke, autoJobs, autoMorale, autoBuildings, autoFactory, autoPower, autoWoodFuel,
     autoCraft, autoResearch, autoDiplomacy, autoExpeditions, autoMigration, autoWonderStart, autoWonderHandle,
@@ -22,7 +33,7 @@ function harness() {
   function action(name, fn) {
     api.actions[name] = (...args) => { calls.push([name, ...args]); return fn(...args); };
   }
-  return { state, api, calls, action, ...context.window.test, context };
+  return { state, api, calls, action, status, ...context.window.test, context };
 }
 
 function powerHarness(generated = 3, housing = 0) {
@@ -1231,7 +1242,10 @@ test('food workers can be trimmed when live job rates are unavailable', () => {
     forager: { res: 'food', base: 0.55 },
     woodcutter: { res: 'wood', base: 0.45 },
     thinker: { res: 'knowledge', base: 0.12 },
-    tinkerer: { res: 'tools', base: 0.03 },
+    // The existing Tinkerer fills the one seat supported by two Woodcutters.
+    // Omitting its cap lets tool demand absorb every released food worker.
+    tinkerer: { res: 'tools', base: 0.03,
+      max: () => 1 + Math.floor(h.state.jobs.woodcutter / 5) },
   };
   h.api.helpers.jobProduction = undefined;
   h.api.helpers.production = () => ({ food: 25.6, wood: 5.12, knowledge: 2.27 });
@@ -1968,7 +1982,11 @@ test('filled finite jobs are not traded back and forth as donors', () => {
 
 test('boot works without an event subscription API', () => {
   const h = harness();
-  h.context.document.getElementById = () => ({});
-  h.context.setInterval = () => 1;
+  let scheduled;
+  h.context.setInterval = (callback, interval) => { scheduled = { callback, interval }; return 1; };
   assert.doesNotThrow(() => h.boot());
+  assert.equal(scheduled.callback, h.automationStep);
+  assert.equal(scheduled.interval, h.settings.interval);
+  assert.match(h.status.textContent, /day 1/);
+  assert.doesNotMatch(h.status.textContent, /Automation error:/);
 });
