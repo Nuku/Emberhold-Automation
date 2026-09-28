@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.10
+// @version      1.36.11
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -34,6 +34,7 @@
     logicOverrides: {},
     ownBuildQueue: [],
     ownResearchQueue: [],
+    triggers: [],
   };
 
   const UI_DEFAULTS = {
@@ -42,6 +43,7 @@
     categoryCollapsed: {
       core: false,
       queues: true,
+      triggers: true,
       jobs: true,
       research: true,
       buildings: true,
@@ -1030,6 +1032,45 @@
     return unlocked(def, state) && affordable(cost, state, demandForOwnAction(type, state, demand)) && invoke(action, id);
   }
 
+  function triggerRequirementMet(trigger, state, demand) {
+    const type = trigger.requirement;
+    const kind = type.startsWith('building') ? 'build' : 'research';
+    const def = queueDefinition(kind, trigger.requirementId);
+    if (!def) return false;
+    let met = unlocked(def, state);
+    if (type.endsWith('Affordable')) {
+      const cost = kind === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        : researchCost(def);
+      met = met && affordable(cost, state, demand);
+    }
+    return trigger.requirementResult === false ? !met : met;
+  }
+
+  function autoTriggers(state, demand) {
+    for (const trigger of Array.isArray(settings.triggers) ? settings.triggers : []) {
+      if (trigger.enabled === false || !triggerRequirementMet(trigger, state, demand)) continue;
+      const type = trigger.actionType === 'research' ? 'research' : 'build';
+      const id = trigger.actionId;
+      const def = id && queueDefinition(type, id);
+      if (!def) continue;
+      const completed = type === 'build'
+        ? Number(state.bld?.[id] || 0)
+        : Number(!!state.techs?.[id]);
+      const alreadyQueued = (state.queues?.[type] || []).some(entry => entry.id === id);
+      const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
+      if (completed >= target || alreadyQueued) continue;
+      const cost = type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        : researchCost(def);
+      if (!unlocked(def, state) || !affordable(cost, state, demand)) continue;
+      // Submit one triggered item per automation pass so competing triggers
+      // cannot spend the same snapshot's resources in parallel.
+      return invoke(type, id);
+    }
+    return false;
+  }
+
   // Keep the legacy reserve for older API snapshots. Newer snapshots expose
   // factories and Living Blocks as controllable power buildings themselves.
   const FACTORY_POWER_REQUIREMENT = 1.5;
@@ -1928,6 +1969,10 @@
       makePanel();
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
+      if (autoTriggers(snapshot(), queuedDemand(snapshot()))) {
+        updatePanel(snapshot());
+        return;
+      }
       let moraleChanged = false;
       for (const [setting, step] of [
         ['buildings', state => autoOwnQueue('build', state, queuedDemand(state))],
@@ -2278,6 +2323,71 @@
     }
   }
 
+  function triggerOptions(type) { return queueOptions(type); }
+
+  function refreshTriggers(panel) {
+    const list = panel.querySelector('[data-trigger-list]');
+    if (!list) return;
+    const buildOptions = triggerOptions('build');
+    const researchOptions = triggerOptions('research');
+    const options = (type, selected) => `<option value="build"${type === 'build' ? ' selected' : ''}>Build</option><option value="research"${type === 'research' ? ' selected' : ''}>Research</option>`;
+    const requirements = ['buildingUnlocked', 'buildingAffordable', 'researchUnlocked', 'researchAffordable'];
+    const requirementOptions = selected => requirements.map(value => `<option value="${value}"${selected === value ? ' selected' : ''}>${value.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</option>`).join('');
+    list.innerHTML = (settings.triggers || []).map((trigger, index) => {
+      const reqBuild = trigger.requirement?.startsWith('building');
+      return `<div class="ea-trigger-row" data-trigger-index="${index}">
+        <label>Requirement <select data-trigger-requirement>${requirementOptions(trigger.requirement || 'researchUnlocked')}</select></label>
+        <select data-trigger-requirement-id>${reqBuild ? buildOptions : researchOptions}</select>
+        <label>Match <input type="checkbox" data-trigger-result${trigger.requirementResult === false ? '' : ' checked'}></label>
+        <label>Action <select data-trigger-action-type>${options(trigger.actionType || 'build')}</select></label>
+        <select data-trigger-action-id>${trigger.actionType === 'research' ? researchOptions : buildOptions}</select>
+        <label>Target total <input type="number" min="1" data-trigger-count value="${Number(trigger.count) || ''}" placeholder="max"></label>
+        <button type="button" data-trigger-up title="Move up">↑</button><button type="button" data-trigger-down title="Move down">↓</button><button type="button" data-trigger-remove>×</button>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-trigger-index]').forEach(row => {
+      const index = Number(row.dataset.triggerIndex);
+      const trigger = settings.triggers[index];
+      row.querySelector('[data-trigger-requirement-id]').value = trigger.requirementId || '';
+      row.querySelector('[data-trigger-action-id]').value = trigger.actionId || '';
+      row.querySelector('[data-trigger-requirement]').addEventListener('change', event => {
+        trigger.requirement = event.target.value;
+        trigger.requirementId = '';
+        saveSettings(); refreshTriggers(panel);
+      });
+      row.querySelector('[data-trigger-requirement-id]').addEventListener('change', event => { trigger.requirementId = event.target.value; saveSettings(); });
+      row.querySelector('[data-trigger-result]').addEventListener('change', event => { trigger.requirementResult = event.target.checked; saveSettings(); });
+      row.querySelector('[data-trigger-action-type]').addEventListener('change', event => {
+        trigger.actionType = event.target.value; trigger.actionId = ''; saveSettings(); refreshTriggers(panel);
+      });
+      row.querySelector('[data-trigger-action-id]').addEventListener('change', event => { trigger.actionId = event.target.value; saveSettings(); });
+      row.querySelector('[data-trigger-count]').addEventListener('change', event => { trigger.count = Number(event.target.value) || 0; saveSettings(); });
+      row.querySelector('[data-trigger-up]').addEventListener('click', () => moveTrigger(index, -1, panel));
+      row.querySelector('[data-trigger-down]').addEventListener('click', () => moveTrigger(index, 1, panel));
+      row.querySelector('[data-trigger-remove]').addEventListener('click', () => { settings.triggers.splice(index, 1); saveSettings(); refreshTriggers(panel); });
+    });
+  }
+
+  function moveTrigger(index, delta, panel) {
+    const target = index + delta;
+    if (target < 0 || target >= settings.triggers.length) return;
+    [settings.triggers[index], settings.triggers[target]] = [settings.triggers[target], settings.triggers[index]];
+    saveSettings(); refreshTriggers(panel);
+  }
+
+  function wireTriggerControls(panel) {
+    panel.querySelector('[data-trigger-add]')?.addEventListener('click', () => {
+      settings.triggers = Array.isArray(settings.triggers) ? settings.triggers : [];
+      settings.triggers.push({ requirement: 'researchUnlocked', requirementId: '', requirementResult: true,
+        actionType: 'build', actionId: '', count: 0 });
+      saveSettings(); refreshTriggers(panel);
+    });
+    panel.querySelector('[data-trigger-reset]')?.addEventListener('click', () => {
+      settings.triggers = []; saveSettings(); refreshTriggers(panel);
+    });
+    refreshTriggers(panel);
+  }
+
   function makePanel() {
     const host = panelHost();
     if (host !== document.body) {
@@ -2306,6 +2416,8 @@
           #emberhold-automation .ea-queue-settings { display: grid; gap: .35rem; padding: .35rem 0; }
           #emberhold-automation .ea-queue-settings label { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
           #emberhold-automation .ea-queue-item { display: flex; justify-content: space-between; gap: .5rem; padding-left: .75rem; }
+          #emberhold-automation .ea-trigger-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)) auto auto auto; gap: .25rem; align-items: center; padding: .25rem 0; border-bottom: 1px solid currentColor; }
+          #emberhold-automation .ea-trigger-row select, #emberhold-automation .ea-trigger-row input { max-width: 100%; min-width: 0; }
           #emberhold-automation [data-settings-text], #emberhold-automation [data-logic-text] { width: 100%; box-sizing: border-box; font: .8em monospace; }
           #emberhold-automation .ea-logic-editor { border-top: 1px solid currentColor; margin-top: .5rem; padding-top: .5rem; display: grid; gap: .35rem; }
           #emberhold-automation .ea-logic-help { opacity: .75; font-size: .85em; }
@@ -2357,6 +2469,11 @@
             <div data-queue-list="research"></div>
             <small>These queues reserve their next item’s ingredients and submit it when affordable. They do not replace Emberhold’s native queues.</small>
           </div></details>
+          <details data-ui-category="triggers"><summary>Triggers</summary><div class="ea-queue-settings">
+            <div><button type="button" data-trigger-reset>Reset Trigger Settings</button> <button type="button" data-trigger-add>Add New Trigger</button></div>
+            <div data-trigger-list></div>
+            <small>When a requirement matches, one affordable build or research item is submitted per automation pass. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
+          </div></details>
           <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
             ${settingInput('interval', 'Loop delay', 'select')}
             <div class="ea-settings-actions"><button type="button" data-export>Export text</button><button type="button" data-download>Save file</button><button type="button" data-import>Import text</button><input type="file" data-import-file accept=".json,application/json"></div>
@@ -2403,6 +2520,7 @@
       wireSettingInputs(panel);
       wireUiDetails(panel);
       wireQueueControls(panel);
+      wireTriggerControls(panel);
       const text = panel.querySelector('[data-settings-text]');
       panel.querySelector('[data-export]').addEventListener('click', () => {
         text.value = exportSettings();
