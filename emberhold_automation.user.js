@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.18
+// @version      1.36.19
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2089,16 +2089,24 @@
       const host = panelHost();
       const settingsHost = gameSettingsHost();
       const panelNeedsMount = !panel?.isConnected || (host !== document.body && panel.parentElement !== host);
-      const settingsNeedMount = detailedSettingsNode && settingsHost && !settingsHost.contains(detailedSettingsNode);
+      const settingsNeedMount = detailedSettingsNode && settingsHost && !settingsMounted(settingsHost, detailedSettingsNode);
       if (panelNeedsMount || settingsNeedMount) makePanel();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  function settingsMounted(host, detail) {
+    if (!host || !detail) return false;
+    if (host.id !== 'panel-settings') return host.contains(detail);
+    const wrapper = document.getElementById('emberhold-automation-settings');
+    return wrapper?.parentElement === host.parentElement &&
+      wrapper.previousElementSibling === host && wrapper.contains(detail);
+  }
+
   function moveDetailedSettings(panel) {
     const detail = panel.querySelector('.ea-settings') || detailedSettingsNode || document.querySelector('#emberhold-automation-settings .ea-settings');
     const host = gameSettingsHost();
-    if (!detail || !host || host === panel || host.contains(detail)) return;
+    if (!detail || !host || host === panel || settingsMounted(host, detail)) return;
     const scrollPositions = [];
     for (let node = host; node && node !== document.body; node = node.parentElement) {
       if (node.scrollTop || node.scrollHeight > node.clientHeight) scrollPositions.push([node, node.scrollTop]);
@@ -2111,7 +2119,10 @@
       wrapper.className = 'ea-embedded-panel';
     }
     wrapper.appendChild(detail);
-    host.appendChild(wrapper);
+    // Emberhold redraws the settings panel during play. Keep the automation
+    // controls beside it so its temporary removal cannot clamp #main.scrollTop.
+    if (host.id === 'panel-settings') host.insertAdjacentElement('afterend', wrapper);
+    else host.appendChild(wrapper);
     scrollPositions.forEach(([node, scrollTop]) => { node.scrollTop = scrollTop; });
     window.requestAnimationFrame?.(() => scrollPositions.forEach(([node, scrollTop]) => {
       if (node.isConnected) node.scrollTop = scrollTop;
@@ -2479,6 +2490,7 @@
           #emberhold-automation .ea-settings { border-top: 1px solid currentColor; padding-top: .35rem; }
           #emberhold-automation .ea-settings > details { padding: .2rem 0; }
           #emberhold-automation .ea-status { opacity: .75; font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          #main > .panel.hidden + .ea-embedded-panel { display: none; }
           @media (max-width: 520px) {
             #emberhold-automation .ea-grid, #emberhold-automation .ea-settings-grid { grid-template-columns: 1fr; }
           }
