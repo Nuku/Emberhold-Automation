@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.27
+// @version      1.36.28
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -72,13 +72,13 @@
   let triggeredQueueItems = loadTriggeredQueueItems();
   let triggerQueueObserver = null;
   let watchedTriggerQueuePanel = null;
-  let triggerQueueAttributionInitialized = localStorage.getItem(`${TRIGGER_QUEUE_KEY}_initialized`) === 'true';
 
   function loadTriggeredQueueItems() {
     try {
       const items = JSON.parse(localStorage.getItem(TRIGGER_QUEUE_KEY) || '[]');
       return Array.isArray(items) ? items.filter(item =>
-        ['build', 'research'].includes(item?.type) && typeof item.id === 'string') : [];
+        ['build', 'research'].includes(item?.type) && typeof item.id === 'string')
+        .map(item => ({ ...item, target: Math.max(1, Number(item.target) || 1) })) : [];
     } catch (_) {
       return [];
     }
@@ -88,60 +88,24 @@
     localStorage.setItem(TRIGGER_QUEUE_KEY, JSON.stringify(triggeredQueueItems));
   }
 
-  function rememberTriggeredQueueItem(type, id) {
+  function rememberTriggeredQueueItem(type, id, target, triggerKey) {
     triggeredQueueItems = triggeredQueueItems.filter(item => item.type !== type);
-    triggeredQueueItems.push({ type, id });
+    triggeredQueueItems.push({ type, id, target, triggerKey });
     saveTriggeredQueueItems();
     syncTriggeredQueue();
   }
 
-  function removeTriggeredQueueItem(type, id, state) {
-    const queue = state.queues?.[type] || [];
-    const index = queue.findIndex(entry => entry.id === id);
-    if (index < 0) return true;
-    const panel = document.querySelector('#queue-panel');
-    const row = panel?.querySelector(`#queue-${type} [data-queue-item][data-index="${index}"]`);
-    const remove = row?.querySelector('button');
-    if (!remove) return false;
-    remove.click();
-    return !(snapshot()?.queues?.[type] || []).some(entry => entry.id === id);
+  function triggerKey(trigger) {
+    return JSON.stringify([trigger.requirement, trigger.requirementId, trigger.requirementResult,
+      trigger.actionType === 'research' ? 'research' : 'build', trigger.actionId, Number(trigger.count) || 0]);
   }
 
   function syncTriggeredQueue() {
     const panel = document.querySelector('#queue-panel');
     if (!panel) return;
     triggerQueueObserver?.disconnect();
-    const state = snapshot() || {};
-    const queues = state.queues || {};
-    if (!triggerQueueAttributionInitialized) {
-      const configuredActions = new Set((settings.triggers || [])
-        .filter(trigger => trigger.enabled !== false && trigger.actionId)
-        .map(trigger => `${trigger.actionType === 'research' ? 'research' : 'build'}:${trigger.actionId}`));
-      for (const type of ['build', 'research']) {
-        for (const entry of queues[type] || []) {
-          if (configuredActions.has(`${type}:${entry.id}`) &&
-              !triggeredQueueItems.some(item => item.type === type && item.id === entry.id)) {
-            triggeredQueueItems.push({ type, id: entry.id });
-          }
-        }
-      }
-      triggerQueueAttributionInitialized = true;
-      localStorage.setItem(`${TRIGGER_QUEUE_KEY}_initialized`, 'true');
-      saveTriggeredQueueItems();
-    }
-    const activeItems = triggeredQueueItems.filter(item =>
-      (queues[item.type] || []).some(entry => entry.id === item.id));
-    for (const type of ['build', 'research']) {
-      const typed = activeItems.filter(item => item.type === type);
-      activeItems.splice(0, activeItems.length, ...activeItems.filter(item => item.type !== type), ...typed.slice(-1));
-    }
-    if (activeItems.length !== triggeredQueueItems.length) {
-      triggeredQueueItems = activeItems;
-      saveTriggeredQueueItems();
-    }
-
     let section = panel.querySelector('#ea-trigger-queue');
-    if (!activeItems.length) {
+    if (!triggeredQueueItems.length) {
       section?.remove();
       triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
       return;
@@ -154,20 +118,18 @@
     }
     const heading = panel.querySelector('#queue-heading');
     if (heading?.nextElementSibling !== section) heading?.insertAdjacentElement('afterend', section);
-    section.querySelectorAll('[data-ea-trigger-clone]').forEach(node => node.remove());
-
-    for (const item of activeItems) {
-      const queue = queues[item.type] || [];
-      const index = queue.findIndex(entry => entry.id === item.id);
-      const nativeQueue = panel.querySelector(`#queue-${item.type}`);
-      const source = nativeQueue?.querySelector(`[data-queue-item][data-index="${index}"]`);
-      if (!source) continue;
-      const clone = document.createElement('div');
-      clone.className = source.className;
-      clone.innerHTML = source.innerHTML;
-      clone.dataset.eaTriggerClone = 'true';
-      source.hidden = true;
-      section.appendChild(clone);
+    section.querySelectorAll('[data-ea-trigger-item]').forEach(node => node.remove());
+    for (const type of ['build', 'research']) {
+      const item = triggeredQueueItems.find(entry => entry.type === type);
+      if (!item) continue;
+      const def = queueDefinition(type, item.id);
+      const cost = def && (type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+      const row = document.createElement('div');
+      row.dataset.eaTriggerItem = 'true';
+      row.textContent = `${def?.name || item.id} · ${Object.entries(cost || {})
+        .map(([resource, amount]) => `${amount} ${resource}`).join(' · ')}`;
+      section.appendChild(row);
     }
     triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
   }
@@ -299,7 +261,7 @@
   function queuedDemand(state = snapshot()) {
     const demand = !state?.settings?.strictQueueOrder ? (api().helpers?.queueDemand?.() || {}) : {};
     if (!state?.settings?.strictQueueOrder) {
-      return mergeDemand(mergeDemand(demand, ownQueueDemand(state)), migrationDemand(state));
+      return mergeDemand(mergeDemand(mergeDemand(demand, ownQueueDemand(state)), triggerQueueDemand()), migrationDemand(state));
     }
 
     // In strict mode the game only considers the first entry in each queue.
@@ -346,7 +308,7 @@
         if (remainder) gameDemand[resource] = (gameDemand[resource] || 0) + remainder;
       }
     }
-    return mergeDemand(mergeDemand(gameDemand, ownQueueDemand(state)), migrationDemand(state));
+    return mergeDemand(mergeDemand(mergeDemand(gameDemand, ownQueueDemand(state)), triggerQueueDemand()), migrationDemand(state));
   }
 
   function migrationDemand(state) {
@@ -407,20 +369,17 @@
     });
   }
 
-  function removeUnreachableTriggeredItems(state) {
-    const panel = document.querySelector('#queue-panel');
-    if (!panel) return false;
+  function triggerQueueDemand() {
+    const demand = {};
     for (const item of triggeredQueueItems) {
-      const queue = state.queues?.[item.type] || [];
-      const index = queue.findIndex(entry => entry.id === item.id);
-      if (index < 0 || !storageCannotFit(queueCost(item.type, queue[index]))) continue;
-      const row = panel.querySelector(`#queue-${item.type} [data-queue-item][data-index="${index}"]`);
-      if (row && typeof row.click === 'function') {
-        row.click();
-        return true;
+      const def = queueDefinition(item.type, item.id);
+      const cost = def && (item.type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+      for (const [resource, amount] of Object.entries(cost || {})) {
+        demand[resource] = (demand[resource] || 0) + amount;
       }
     }
-    return false;
+    return demand;
   }
 
   function ownQueueDemand(state) {
@@ -446,6 +405,17 @@
     const cost = type === 'build'
       ? (api().helpers?.buildingCost?.(def) || def.cost)
       : researchCost(def);
+    const result = { ...(demand || {}) };
+    for (const [resource, amount] of Object.entries(cost || {})) {
+      result[resource] = Math.max(0, (result[resource] || 0) - amount);
+    }
+    return result;
+  }
+
+  function demandForTriggerAction(item, demand) {
+    const def = queueDefinition(item.type, item.id);
+    const cost = def && (item.type === 'build'
+      ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
     const result = { ...(demand || {}) };
     for (const [resource, amount] of Object.entries(cost || {})) {
       result[resource] = Math.max(0, (result[resource] || 0) - amount);
@@ -1049,7 +1019,11 @@
       const baseMinimum = coalReserveActive(id) ? minimum(id) :
         (foodEmergency && id !== 'forager' ? 0 : sustainingFloor);
       const limit = jobLimit(id);
-      const finiteSeatMinimum = !foodEmergency && Number.isFinite(limit) ? count(id) : 0;
+      // Some game builds report the current population as the cap for ordinary
+      // jobs. Those are not scarce seats: protecting their existing workers
+      // can leave truly limited jobs (such as diggers) empty indefinitely.
+      const finiteSeatMinimum = !foodEmergency && Number.isFinite(limit) &&
+        limit < state.pop ? count(id) : 0;
       const prerequisiteMinimum = id === 'woodcutter' ? tinkererWoodMinimum() : 0;
       return Math.max(baseMinimum, finiteSeatMinimum, prerequisiteMinimum);
     };
@@ -1229,6 +1203,7 @@
   function autoResearch(state, demand) {
     const defs = definitions().TECHS || [];
     for (const id of orderedIds(RESEARCH_ORDER, defs.map(def => def.id))) {
+      if (triggeredQueueItems.some(item => item.type === 'research' && item.id === id)) continue;
       if (state.queues?.research?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (def && !state.techs[id] && unlocked(def, state) &&
@@ -1246,6 +1221,7 @@
     const id = queue[0];
     const def = queueDefinition(type, id);
     if (!def) return false;
+    if (triggeredQueueItems.some(item => item.type === type && item.id === id)) return false;
     const finished = type === 'build'
       ? Number(state.bld?.[id] || 0) >= Number(def.max || 1)
       : !!state.techs?.[id];
@@ -1277,42 +1253,102 @@
   }
 
   function autoTriggers(state, demand) {
-    if (removeUnreachableTriggeredItems(state)) return true;
-    for (const trigger of Array.isArray(settings.triggers) ? settings.triggers : []) {
-      if (trigger.enabled === false || !triggerRequirementMet(trigger, state, demand)) continue;
-      const type = trigger.actionType === 'research' ? 'research' : 'build';
-      const id = trigger.actionId;
-      const def = id && queueDefinition(type, id);
-      if (!def) continue;
-      const cost = type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost)
-        : researchCost(def);
-      // A trigger must not keep inserting an item whose full cost cannot fit
-      // in storage. It becomes eligible automatically if storage is expanded.
-      if (storageCannotFit(cost)) continue;
-      const completed = type === 'build'
-        ? Number(state.bld?.[id] || 0)
-        : Number(!!state.techs?.[id]);
-      const alreadyQueued = (state.queues?.[type] || []).some(entry => entry.id === id);
-      const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
-      if (completed >= target) continue;
-      if (!unlocked(def, state)) continue;
-      const current = triggeredQueueItems.find(item => item.type === type);
-      if (current?.id === id && alreadyQueued) continue;
-      if (current && current.id !== id) {
-        if (!removeTriggeredQueueItem(type, current.id, state)) return false;
+    let changed = false;
+    const triggers = Array.isArray(settings.triggers) ? settings.triggers : [];
+
+    // Remove native queue entries created by earlier versions of trigger
+    // automation. New trigger slots are virtual and never enter game queues.
+    const legacyItems = triggeredQueueItems.filter(item => !item.triggerKey);
+    for (const item of legacyItems) {
+      const queue = state.queues?.[item.type] || [];
+      const index = queue.findIndex(entry => entry.id === item.id);
+      if (index >= 0) {
+        const panel = document.querySelector('#queue-panel');
+        const row = panel?.querySelector(`#queue-${item.type} [data-queue-item][data-index="${index}"]`);
+        const cancel = row?.querySelector('button') || row;
+        if (!cancel) continue;
+        cancel.click();
+        state = snapshot() || state;
+        changed = true;
+        break;
+      }
+      triggeredQueueItems = triggeredQueueItems.filter(entry => entry !== item);
+      saveTriggeredQueueItems();
+      changed = true;
+    }
+    if (legacyItems.length) return changed;
+
+    for (const type of ['build', 'research']) {
+      let current = triggeredQueueItems.find(item => item.type === type);
+      const currentDef = current && queueDefinition(type, current.id);
+      const currentCompleted = !currentDef || (type === 'build'
+        ? Number(state.bld?.[current.id] || 0) >= Number(current.target || currentDef.max || 1)
+        : !!state.techs?.[current.id]);
+      const currentTriggerIndex = current
+        ? triggers.findIndex(trigger => triggerKey(trigger) === current.triggerKey && trigger.enabled !== false) : -1;
+      if (currentCompleted || (current && currentTriggerIndex < 0)) {
         triggeredQueueItems = triggeredQueueItems.filter(item => item.type !== type);
         saveTriggeredQueueItems();
-        state = snapshot() || state;
+        current = null;
+        changed = true;
       }
-      // A trigger owns one slot per action type. Higher-priority matches replace
-      // that slot immediately; unrelated native queue entries remain untouched.
-      if (alreadyQueued) continue;
-      if (!invoke(type, id)) return false;
-      rememberTriggeredQueueItem(type, id);
-      return true;
+
+      let candidate = null;
+      const matchDemand = current ? demandForTriggerAction(current, demand) : demand;
+      for (let index = 0; index < triggers.length; index++) {
+        const trigger = triggers[index];
+        if (trigger.enabled === false || !triggerRequirementMet(trigger, state, matchDemand)) continue;
+        const actionType = trigger.actionType === 'research' ? 'research' : 'build';
+        if (actionType !== type) continue;
+        const id = trigger.actionId;
+        const def = id && queueDefinition(type, id);
+        if (!def || !unlocked(def, state)) continue;
+        const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
+        const completed = type === 'build' ? Number(state.bld?.[id] || 0) : Number(!!state.techs?.[id]);
+        const cost = type === 'build'
+          ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def);
+        if (completed >= target || storageCannotFit(cost)) continue;
+        candidate = { index, trigger, id, target, triggerKey: triggerKey(trigger) };
+        break;
+      }
+
+      // A qualifying trigger earlier in the list takes the slot immediately.
+      // Existing work stays queued if its own condition later stops matching.
+      if (!current && candidate) {
+        rememberTriggeredQueueItem(type, candidate.id, candidate.target, candidate.triggerKey);
+        current = triggeredQueueItems.find(item => item.type === type);
+        changed = true;
+      } else if (current && candidate && candidate.index < currentTriggerIndex) {
+        rememberTriggeredQueueItem(type, candidate.id, candidate.target, candidate.triggerKey);
+        current = triggeredQueueItems.find(item => item.type === type);
+        changed = true;
+      }
     }
-    return false;
+
+    let acted = false;
+    for (const type of ['build', 'research']) {
+      const item = triggeredQueueItems.find(entry => entry.type === type);
+      if (!item) continue;
+      state = snapshot() || state;
+      const def = queueDefinition(type, item.id);
+      if (!def) continue;
+      const completed = type === 'build'
+        ? Number(state.bld?.[item.id] || 0) : Number(!!state.techs?.[item.id]);
+      if (completed >= item.target) {
+        triggeredQueueItems = triggeredQueueItems.filter(entry => entry.type !== type);
+        saveTriggeredQueueItems();
+        changed = true;
+        continue;
+      }
+      if (!unlocked(def, state)) continue;
+      const cost = type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def);
+      const actionDemand = demandForTriggerAction(item, queuedDemand(state));
+      if (!affordable(cost, state, actionDemand)) continue;
+      const action = type === 'build' ? 'buildNow' : 'researchNow';
+      if (invoke(action, item.id)) acted = true;
+    }
+    return acted || changed;
   }
 
   // Keep the legacy reserve for older API snapshots. Newer snapshots expose
@@ -1546,6 +1582,7 @@
     // ordinary queue reservations because it makes those reservations feasible.
     if (queueNeedsMoreRoom) {
       for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
+        if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id)) continue;
         if (!STORAGE_BUILDINGS.has(id) || state.queues?.build?.some(entry => entry.id === id)) continue;
         const def = defs.find(item => item.id === id);
         if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
@@ -1562,6 +1599,7 @@
       }
     }
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
+      if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id)) continue;
       if (state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
@@ -2731,7 +2769,7 @@
           <details data-ui-category="triggers"><summary>Triggers</summary><div class="ea-queue-settings">
             <div><button type="button" data-trigger-reset>Reset Trigger Settings</button> <button type="button" data-trigger-add>Add New Trigger</button></div>
             <div data-trigger-list></div>
-            <small>The first qualifying trigger in list order occupies one build or research slot. A higher-priority match replaces the current trigger item of that type immediately. Trigger items stay in Emberhold’s queue until affordable and appear in the Triggers section above the native queues. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
+            <small>The first qualifying trigger in list order owns one separate build or research slot. A higher-priority match replaces the current trigger item of that type immediately. Trigger items stay in the Triggers section and complete directly when affordable, without entering Emberhold’s native queues. Staged buildings advance one stage per automation pass. Target total means the desired number completed/owned. Leave it blank to use the target’s normal maximum.</small>
           </div></details>
           <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
             ${settingInput('interval', 'Loop delay', 'select')}
