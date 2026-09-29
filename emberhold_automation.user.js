@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.23
+// @version      1.36.24
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -100,7 +100,8 @@
     const panel = document.querySelector('#queue-panel');
     if (!panel) return;
     triggerQueueObserver?.disconnect();
-    const queues = snapshot()?.queues || {};
+    const state = snapshot() || {};
+    const queues = state.queues || {};
     if (!triggerQueueAttributionInitialized) {
       const configuredActions = new Set((settings.triggers || [])
         .filter(trigger => trigger.enabled !== false && trigger.actionId)
@@ -125,7 +126,7 @@
     }
 
     let section = panel.querySelector('#ea-trigger-queue');
-    if (!triggeredQueueItems.length) {
+    if (!activeItems.length) {
       section?.remove();
       triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
       return;
@@ -140,7 +141,7 @@
     if (heading?.nextElementSibling !== section) heading?.insertAdjacentElement('afterend', section);
     section.querySelectorAll('[data-ea-trigger-clone]').forEach(node => node.remove());
 
-    for (const item of triggeredQueueItems) {
+    for (const item of activeItems) {
       const queue = queues[item.type] || [];
       const index = queue.findIndex(entry => entry.id === item.id);
       const nativeQueue = panel.querySelector(`#queue-${item.type}`);
@@ -1199,12 +1200,9 @@
       const alreadyQueued = (state.queues?.[type] || []).some(entry => entry.id === id);
       const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
       if (completed >= target || alreadyQueued) continue;
-      const cost = type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost)
-        : researchCost(def);
-      if (!unlocked(def, state) || !affordable(cost, state, demand)) continue;
-      // Submit one triggered item per automation pass so competing triggers
-      // cannot spend the same snapshot's resources in parallel.
+      if (!unlocked(def, state)) continue;
+      // Queue one triggered item per pass in configured priority order. The
+      // native queue can wait for its ingredients while automation gathers them.
       if (!invoke(type, id)) return false;
       rememberTriggeredQueueItem(type, id);
       return true;
@@ -2628,7 +2626,7 @@
           <details data-ui-category="triggers"><summary>Triggers</summary><div class="ea-queue-settings">
             <div><button type="button" data-trigger-reset>Reset Trigger Settings</button> <button type="button" data-trigger-add>Add New Trigger</button></div>
             <div data-trigger-list></div>
-            <small>When a requirement matches, one affordable build or research item is submitted per automation pass. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
+            <small>When a requirement matches, one build or research item is submitted per automation pass in trigger order. It stays in Emberhold’s queue until affordable, and appears in the Triggers section above the native queues. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
           </div></details>
           <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
             ${settingInput('interval', 'Loop delay', 'select')}
