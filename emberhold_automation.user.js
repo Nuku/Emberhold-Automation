@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.29
+// @version      1.36.30
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1347,7 +1347,13 @@
       const cost = type === 'build'
         ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def);
       const actionDemand = demandForTriggerAction(item, queuedDemand(state));
-      if (!affordable(cost, state, actionDemand)) continue;
+      if (!affordable(cost, state, actionDemand)) {
+        // Trigger items bypass Emberhold's native queues, so their missing
+        // ingredients must be supplied here instead of relying on native
+        // queue demand to make autoCraft notice them.
+        if (settings.crafting && craftMissingFor(cost, state, actionDemand)) return true;
+        continue;
+      }
       const action = type === 'build' ? 'buildNow' : 'researchNow';
       if (invoke(action, item.id)) acted = true;
     }
