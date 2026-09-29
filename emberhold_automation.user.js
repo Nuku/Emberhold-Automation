@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.20
+// @version      1.36.22
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -16,6 +16,7 @@
   'use strict';
 
   const SETTINGS_KEY = 'emberhold_automation_settings';
+  const TRIGGER_QUEUE_KEY = `${SETTINGS_KEY}_trigger_queue`;
   const DEFAULTS = {
     enabled: true,
     jobs: true,
@@ -68,6 +69,85 @@
   const pausedDiplomats = Object.create(null);
   let uiSettings = loadUiSettings();
   let detailedSettingsNode = null;
+  let triggeredQueueItems = loadTriggeredQueueItems();
+  let triggerQueueObserver = null;
+  let watchedTriggerQueuePanel = null;
+
+  function loadTriggeredQueueItems() {
+    try {
+      const items = JSON.parse(localStorage.getItem(TRIGGER_QUEUE_KEY) || '[]');
+      return Array.isArray(items) ? items.filter(item =>
+        ['build', 'research'].includes(item?.type) && typeof item.id === 'string') : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveTriggeredQueueItems() {
+    localStorage.setItem(TRIGGER_QUEUE_KEY, JSON.stringify(triggeredQueueItems));
+  }
+
+  function rememberTriggeredQueueItem(type, id) {
+    if (!triggeredQueueItems.some(item => item.type === type && item.id === id)) {
+      triggeredQueueItems.push({ type, id });
+      saveTriggeredQueueItems();
+    }
+    syncTriggeredQueue();
+  }
+
+  function syncTriggeredQueue() {
+    const panel = document.querySelector('#queue-panel');
+    if (!panel) return;
+    triggerQueueObserver?.disconnect();
+    const queues = snapshot()?.queues || {};
+    const activeItems = triggeredQueueItems.filter(item =>
+      (queues[item.type] || []).some(entry => entry.id === item.id));
+    if (activeItems.length !== triggeredQueueItems.length) {
+      triggeredQueueItems = activeItems;
+      saveTriggeredQueueItems();
+    }
+
+    let section = panel.querySelector('#ea-trigger-queue');
+    if (!triggeredQueueItems.length) {
+      section?.remove();
+      triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
+      return;
+    }
+    if (!section) {
+      section = document.createElement('div');
+      section.id = 'ea-trigger-queue';
+      section.className = 'side-queue';
+      section.innerHTML = '<div class="queue-label">Triggers</div>';
+    }
+    const heading = panel.querySelector('#queue-heading');
+    if (heading?.nextElementSibling !== section) heading?.insertAdjacentElement('afterend', section);
+    section.querySelectorAll('[data-ea-trigger-clone]').forEach(node => node.remove());
+
+    for (const item of triggeredQueueItems) {
+      const queue = queues[item.type] || [];
+      const index = queue.findIndex(entry => entry.id === item.id);
+      const nativeQueue = panel.querySelector(`#queue-${item.type}`);
+      const source = nativeQueue?.querySelector(`[data-queue-item][data-index="${index}"]`);
+      if (!source) continue;
+      const clone = document.createElement('div');
+      clone.className = source.className;
+      clone.innerHTML = source.innerHTML;
+      clone.dataset.eaTriggerClone = 'true';
+      source.hidden = true;
+      section.appendChild(clone);
+    }
+    triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
+  }
+
+  function watchTriggeredQueue() {
+    const panel = document.querySelector('#queue-panel');
+    if (!panel || panel === watchedTriggerQueuePanel || typeof MutationObserver === 'undefined') return;
+    watchedTriggerQueuePanel = panel;
+    triggerQueueObserver?.disconnect();
+    triggerQueueObserver = new MutationObserver(() => syncTriggeredQueue());
+    triggerQueueObserver.observe(panel, { childList: true, subtree: true });
+    syncTriggeredQueue();
+  }
 
   function loadSettings() {
     try {
@@ -1108,7 +1188,9 @@
       if (!unlocked(def, state) || !affordable(cost, state, demand)) continue;
       // Submit one triggered item per automation pass so competing triggers
       // cannot spend the same snapshot's resources in parallel.
-      return invoke(type, id);
+      if (!invoke(type, id)) return false;
+      rememberTriggeredQueueItem(type, id);
+      return true;
     }
     return false;
   }
@@ -2091,6 +2173,7 @@
     if (typeof MutationObserver === 'undefined' || !document.body || document.body.dataset.eaObserved) return;
     document.body.dataset.eaObserved = 'true';
     const observer = new MutationObserver(() => {
+      watchTriggeredQueue();
       const panel = document.getElementById('emberhold-automation');
       const host = panelHost();
       const settingsHost = gameSettingsHost();
@@ -2618,6 +2701,7 @@
       status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}${powerText}`;
       status.title = status.textContent;
     }
+    syncTriggeredQueue();
   }
 
   function restart() {
@@ -2629,6 +2713,7 @@
     if (typeof api()?.getState !== 'function') return setTimeout(boot, 250);
     lastAction = api().actions ? 'Connected to Emberhold' : api().action ? 'Connected (legacy API)' : 'State API only — actions unavailable';
     watchGamePanels();
+    watchTriggeredQueue();
     makePanel();
     if (typeof api().subscribe === 'function') api().subscribe(updatePanel);
     restart();
