@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.22
+// @version      1.36.23
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -72,6 +72,7 @@
   let triggeredQueueItems = loadTriggeredQueueItems();
   let triggerQueueObserver = null;
   let watchedTriggerQueuePanel = null;
+  let triggerQueueAttributionInitialized = localStorage.getItem(`${TRIGGER_QUEUE_KEY}_initialized`) === 'true';
 
   function loadTriggeredQueueItems() {
     try {
@@ -100,6 +101,22 @@
     if (!panel) return;
     triggerQueueObserver?.disconnect();
     const queues = snapshot()?.queues || {};
+    if (!triggerQueueAttributionInitialized) {
+      const configuredActions = new Set((settings.triggers || [])
+        .filter(trigger => trigger.enabled !== false && trigger.actionId)
+        .map(trigger => `${trigger.actionType === 'research' ? 'research' : 'build'}:${trigger.actionId}`));
+      for (const type of ['build', 'research']) {
+        for (const entry of queues[type] || []) {
+          if (configuredActions.has(`${type}:${entry.id}`) &&
+              !triggeredQueueItems.some(item => item.type === type && item.id === entry.id)) {
+            triggeredQueueItems.push({ type, id: entry.id });
+          }
+        }
+      }
+      triggerQueueAttributionInitialized = true;
+      localStorage.setItem(`${TRIGGER_QUEUE_KEY}_initialized`, 'true');
+      saveTriggeredQueueItems();
+    }
     const activeItems = triggeredQueueItems.filter(item =>
       (queues[item.type] || []).some(entry => entry.id === item.id));
     if (activeItems.length !== triggeredQueueItems.length) {
