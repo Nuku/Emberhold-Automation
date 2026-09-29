@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.24
+// @version      1.36.25
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -374,6 +374,40 @@
     return (list || []).find(def => def.id === id);
   }
 
+  function queueCost(type, entry) {
+    const def = queueDefinition(type, entry?.id);
+    return api().helpers?.queueCost?.(entry) ?? (type === 'build'
+      ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry?.cost
+      : type === 'research'
+        ? (def ? researchCost(def) : entry?.cost)
+        : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry?.cost);
+  }
+
+  function storageCannotFit(cost) {
+    const capacityOf = api().helpers?.capacityOf;
+    if (typeof capacityOf !== 'function') return false;
+    return Object.entries(cost || {}).some(([resource, amount]) => {
+      const capacity = Number(capacityOf(resource));
+      return Number.isFinite(capacity) && Number(amount) > capacity;
+    });
+  }
+
+  function removeUnreachableTriggeredItems(state) {
+    const panel = document.querySelector('#queue-panel');
+    if (!panel) return false;
+    for (const item of triggeredQueueItems) {
+      const queue = state.queues?.[item.type] || [];
+      const index = queue.findIndex(entry => entry.id === item.id);
+      if (index < 0 || !storageCannotFit(queueCost(item.type, queue[index]))) continue;
+      const row = panel.querySelector(`#queue-${item.type} [data-queue-item][data-index="${index}"]`);
+      if (row && typeof row.click === 'function') {
+        row.click();
+        return true;
+      }
+    }
+    return false;
+  }
+
   function ownQueueDemand(state) {
     const demand = {};
     for (const [type, queue] of [['build', settings.ownBuildQueue], ['research', settings.ownResearchQueue]]) {
@@ -595,9 +629,17 @@
     const recipes = factoryRecipes().filter(recipe => factoryRecipeUnlocked(recipe, state));
     const byOutput = new Map(recipes.map(recipe => [recipe.id, recipe]));
     const stock = resource => Math.max(0, Number(state.res?.[resource] || 0));
-    const goals = recipes.filter(recipe => (demand[recipe.id] || 0) > stock(recipe.id));
+    const capacityOf = api().helpers?.capacityOf;
+    const hasRoom = resource => {
+      const capacity = typeof capacityOf === 'function' ? Number(capacityOf(resource)) : NaN;
+      return !Number.isFinite(capacity) || stock(resource) < capacity;
+    };
+    // Queued demand cannot make production useful once its output store is
+    // full. This also lets Divided Attention drop a stale full-output recipe.
+    const goals = recipes.filter(recipe => hasRoom(recipe.id) &&
+      (demand[recipe.id] || 0) > stock(recipe.id));
     const trialGoal = FACTORY_TRIAL_GOALS[state.trial?.id];
-    if (trialGoal && stock(trialGoal.resource) < trialGoal.amount) {
+    if (trialGoal && hasRoom(trialGoal.resource) && stock(trialGoal.resource) < trialGoal.amount) {
       const recipe = byOutput.get(trialGoal.resource);
       if (recipe && !goals.includes(recipe)) goals.push(recipe);
     }
@@ -1188,12 +1230,19 @@
   }
 
   function autoTriggers(state, demand) {
+    if (removeUnreachableTriggeredItems(state)) return true;
     for (const trigger of Array.isArray(settings.triggers) ? settings.triggers : []) {
       if (trigger.enabled === false || !triggerRequirementMet(trigger, state, demand)) continue;
       const type = trigger.actionType === 'research' ? 'research' : 'build';
       const id = trigger.actionId;
       const def = id && queueDefinition(type, id);
       if (!def) continue;
+      const cost = type === 'build'
+        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        : researchCost(def);
+      // A trigger must not keep inserting an item whose full cost cannot fit
+      // in storage. It becomes eligible automatically if storage is expanded.
+      if (storageCannotFit(cost)) continue;
       const completed = type === 'build'
         ? Number(state.bld?.[id] || 0)
         : Number(!!state.techs?.[id]);
