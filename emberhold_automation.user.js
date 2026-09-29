@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.31
+// @version      1.36.32
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1275,17 +1275,16 @@
         const panel = document.querySelector('#queue-panel');
         const row = panel?.querySelector(`#queue-${item.type} [data-queue-item][data-index="${index}"]`);
         const cancel = row?.querySelector('button') || row;
-        if (!cancel) continue;
-        cancel.click();
+        cancel?.click();
         state = snapshot() || state;
-        changed = true;
-        break;
       }
+      // Discard the legacy marker after one attempt even if the host queue
+      // refused the click; otherwise every automation tick returns early and
+      // starves crafting and all other actions.
       triggeredQueueItems = triggeredQueueItems.filter(entry => entry !== item);
       saveTriggeredQueueItems();
       changed = true;
     }
-    if (legacyItems.length) return changed;
 
     for (const type of ['build', 'research']) {
       let current = triggeredQueueItems.find(item => item.type === type);
@@ -2296,7 +2295,9 @@
       makePanel();
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
-      if (autoTriggers(snapshot(), queuedDemand(snapshot()))) {
+      const stateBeforeTriggers = JSON.stringify(snapshot());
+      autoTriggers(snapshot(), queuedDemand(snapshot()));
+      if (JSON.stringify(snapshot()) !== stateBeforeTriggers) {
         updatePanel(snapshot());
         return;
       }
