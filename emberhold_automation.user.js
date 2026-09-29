@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.30
+// @version      1.36.31
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -416,6 +416,15 @@
     const def = queueDefinition(item.type, item.id);
     const cost = def && (item.type === 'build'
       ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+    const result = { ...(demand || {}) };
+    for (const [resource, amount] of Object.entries(cost || {})) {
+      result[resource] = Math.max(0, (result[resource] || 0) - amount);
+    }
+    return result;
+  }
+
+  function demandForQueuedAction(type, entry, demand) {
+    const cost = queueCost(type, entry);
     const result = { ...(demand || {}) };
     for (const [resource, amount] of Object.entries(cost || {})) {
       result[resource] = Math.max(0, (result[resource] || 0) - amount);
@@ -1643,6 +1652,20 @@
     return false;
   }
 
+  function autoSupplyQueuedIngredients(state) {
+    const strict = !!state?.settings?.strictQueueOrder;
+    const demand = queuedDemand(state);
+    for (const type of ['build', 'research', 'expedition']) {
+      const queue = state.queues?.[type] || [];
+      for (const [index, entry] of queue.entries()) {
+        if (strict && index > 0) break;
+        const cost = queueCost(type, entry);
+        if (cost && craftMissingFor(cost, state, demandForQueuedAction(type, entry, demand))) return true;
+      }
+    }
+    return false;
+  }
+
   function autoCraft(state, demand) {
     // Supply queued projects before stocking a single batch of each recipe.
     // Their desired outputs are already included in demand; do not subtract
@@ -2274,6 +2297,10 @@
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
       if (autoTriggers(snapshot(), queuedDemand(snapshot()))) {
+        updatePanel(snapshot());
+        return;
+      }
+      if (logicValue('crafting', snapshot(), settings.crafting) && autoSupplyQueuedIngredients(snapshot())) {
         updatePanel(snapshot());
         return;
       }
