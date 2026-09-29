@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.25
+// @version      1.36.26
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -719,6 +719,25 @@
     if (currentFactoryRecipe(state)?.id !== targetIds[0]) invoke('chooseFactoryRecipe', targetIds[0]);
   }
 
+  function autoIronForges(state, demand) {
+    if (!(api().actions?.setIronForges || api().action)) return;
+    const owned = Math.max(0, Math.floor(Number(state.bld?.forge) || 0));
+    if (!owned) return;
+    const capacityOf = api().helpers?.capacityOf;
+    const target = resource => {
+      const capacity = typeof capacityOf === 'function' ? Number(capacityOf(resource)) : NaN;
+      const reserve = Number.isFinite(capacity) ? Math.max(10, Math.ceil(capacity * 0.5)) : 10;
+      return Math.max(reserve, Math.ceil(Number(demand?.[resource]) || 0));
+    };
+    const ironTarget = target('iron');
+    const steelTarget = target('steel');
+    const ironGap = Math.max(0, ironTarget - Math.max(0, Number(state.res?.iron) || 0));
+    const steelGap = Math.max(0, steelTarget - Math.max(0, Number(state.res?.steel) || 0));
+    const ironForges = ironGap + steelGap > 0
+      ? Math.round(owned * ironGap / (ironGap + steelGap)) : 0;
+    if (Number(state.forgeIron) !== ironForges) invoke('setIronForges', ironForges);
+  }
+
   function autoMorale(state) {
     const defs = definitions().JOBS || {};
     const performer = defs.performer;
@@ -931,10 +950,23 @@
       .filter(id => defs[id].res && Number(defs[id].base) > 0 &&
         !needs.some(([job]) => job === id))
       .map(id => [id, defs[id].res, reserve(defs[id].res)]);
+    const migrationNeeds = state.migrating && state.migrationPreparation
+      ? migrationDemand(state) : {};
     const demandNeeds = assignable
       .filter(id => defs[id].res && Number(defs[id].base) > 0 && (demand[defs[id].res] || 0) > 0)
-      .map(id => [id, defs[id].res,
-        Math.max(reserve(defs[id].res), Math.ceil((demand[defs[id].res] || 0) * 0.10))]);
+      .map(id => {
+        const resource = defs[id].res;
+        const capacity = typeof capacityOf === 'function' ? Number(capacityOf(resource)) : NaN;
+        // Migration supplies are an active production goal until committed.
+        // Aim to fill the available store (or the remaining project demand
+        // when smaller), while ordinary queues retain their modest 10% target.
+        const migrationTarget = migrationNeeds[resource] > 0
+          ? Math.min(migrationNeeds[resource], Number.isFinite(capacity) ? capacity : migrationNeeds[resource])
+          : 0;
+        const queueTarget = migrationTarget > 0 ? migrationTarget
+          : Math.ceil((demand[resource] || 0) * 0.10);
+        return [id, resource, Math.max(reserve(resource), queueTarget)];
+      });
     if (settings.diplomacy && defs.diplomat && jobUnlocked(defs.diplomat) &&
         (api()?.actions?.assignDiplomat || api()?.action)) {
       for (const [id, count] of Object.entries(state.diplomats || {})) {
@@ -2178,7 +2210,7 @@
       for (const [setting, step] of [
         ['buildings', state => autoOwnQueue('build', state, queuedDemand(state))],
         ['research', state => autoOwnQueue('research', state, queuedDemand(state))],
-        ['power', autoFactory], ['power', autoWoodFuel], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
+        ['power', autoFactory], ['power', autoWoodFuel], ['power', autoIronForges], ['power', autoPower], ['jobs', autoMorale], ['jobs', autoJobs], ['research', autoResearch],
         ['buildings', autoBuildings], ['crafting', autoCraft],
         ['diplomacy', autoDiplomacy], ['expeditions', autoExpeditions],
         ['diplomacy', autoUniteRegion],
