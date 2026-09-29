@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.26
+// @version      1.36.27
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -89,11 +89,22 @@
   }
 
   function rememberTriggeredQueueItem(type, id) {
-    if (!triggeredQueueItems.some(item => item.type === type && item.id === id)) {
-      triggeredQueueItems.push({ type, id });
-      saveTriggeredQueueItems();
-    }
+    triggeredQueueItems = triggeredQueueItems.filter(item => item.type !== type);
+    triggeredQueueItems.push({ type, id });
+    saveTriggeredQueueItems();
     syncTriggeredQueue();
+  }
+
+  function removeTriggeredQueueItem(type, id, state) {
+    const queue = state.queues?.[type] || [];
+    const index = queue.findIndex(entry => entry.id === id);
+    if (index < 0) return true;
+    const panel = document.querySelector('#queue-panel');
+    const row = panel?.querySelector(`#queue-${type} [data-queue-item][data-index="${index}"]`);
+    const remove = row?.querySelector('button');
+    if (!remove) return false;
+    remove.click();
+    return !(snapshot()?.queues?.[type] || []).some(entry => entry.id === id);
   }
 
   function syncTriggeredQueue() {
@@ -120,6 +131,10 @@
     }
     const activeItems = triggeredQueueItems.filter(item =>
       (queues[item.type] || []).some(entry => entry.id === item.id));
+    for (const type of ['build', 'research']) {
+      const typed = activeItems.filter(item => item.type === type);
+      activeItems.splice(0, activeItems.length, ...activeItems.filter(item => item.type !== type), ...typed.slice(-1));
+    }
     if (activeItems.length !== triggeredQueueItems.length) {
       triggeredQueueItems = activeItems;
       saveTriggeredQueueItems();
@@ -1280,10 +1295,19 @@
         : Number(!!state.techs?.[id]);
       const alreadyQueued = (state.queues?.[type] || []).some(entry => entry.id === id);
       const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
-      if (completed >= target || alreadyQueued) continue;
+      if (completed >= target) continue;
       if (!unlocked(def, state)) continue;
-      // Queue one triggered item per pass in configured priority order. The
-      // native queue can wait for its ingredients while automation gathers them.
+      const current = triggeredQueueItems.find(item => item.type === type);
+      if (current?.id === id && alreadyQueued) continue;
+      if (current && current.id !== id) {
+        if (!removeTriggeredQueueItem(type, current.id, state)) return false;
+        triggeredQueueItems = triggeredQueueItems.filter(item => item.type !== type);
+        saveTriggeredQueueItems();
+        state = snapshot() || state;
+      }
+      // A trigger owns one slot per action type. Higher-priority matches replace
+      // that slot immediately; unrelated native queue entries remain untouched.
+      if (alreadyQueued) continue;
       if (!invoke(type, id)) return false;
       rememberTriggeredQueueItem(type, id);
       return true;
@@ -2707,7 +2731,7 @@
           <details data-ui-category="triggers"><summary>Triggers</summary><div class="ea-queue-settings">
             <div><button type="button" data-trigger-reset>Reset Trigger Settings</button> <button type="button" data-trigger-add>Add New Trigger</button></div>
             <div data-trigger-list></div>
-            <small>When a requirement matches, one build or research item is submitted per automation pass in trigger order. It stays in Emberhold’s queue until affordable, and appears in the Triggers section above the native queues. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
+            <small>The first qualifying trigger in list order occupies one build or research slot. A higher-priority match replaces the current trigger item of that type immediately. Trigger items stay in Emberhold’s queue until affordable and appear in the Triggers section above the native queues. Target total means the desired number completed/owned; queued copies do not count. Leave it blank to use the target’s normal maximum.</small>
           </div></details>
           <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
             ${settingInput('interval', 'Loop delay', 'select')}
