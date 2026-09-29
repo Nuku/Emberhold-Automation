@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.32
+// @version      1.36.33
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -116,19 +116,69 @@
       section.className = 'side-queue';
       section.innerHTML = '<div class="queue-label">Triggers</div>';
     }
+    if (!document.querySelector('#ea-trigger-queue-style')) {
+      const style = document.createElement('style');
+      style.id = 'ea-trigger-queue-style';
+      style.textContent = `
+        #ea-trigger-queue .ea-trigger-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 3px 12px;
+          margin: 4px 12px;
+          padding: 8px;
+          border: 1px solid #9a6330;
+          border-radius: 7px;
+          background: #17181b;
+          font-size: 12px;
+        }
+        #ea-trigger-queue .ea-trigger-name { color: #f3a13b; }
+        #ea-trigger-queue .ea-trigger-requires,
+        #ea-trigger-queue .ea-trigger-stock,
+        #ea-trigger-queue .ea-trigger-status { color: #8f9daf; }
+        #ea-trigger-queue .ea-trigger-requires,
+        #ea-trigger-queue .ea-trigger-status { text-align: right; }
+        #ea-trigger-queue .ea-trigger-stock { color: #d8dce2; }
+      `;
+      document.head.appendChild(style);
+    }
     const heading = panel.querySelector('#queue-heading');
     if (heading?.nextElementSibling !== section) heading?.insertAdjacentElement('afterend', section);
     section.querySelectorAll('[data-ea-trigger-item]').forEach(node => node.remove());
+    const state = snapshot();
     for (const type of ['build', 'research']) {
       const item = triggeredQueueItems.find(entry => entry.type === type);
       if (!item) continue;
       const def = queueDefinition(type, item.id);
       const cost = def && (type === 'build'
         ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+      const resources = Object.entries(cost || {});
+      const missing = resources.filter(([resource, amount]) => Number(state.res?.[resource] || 0) < Number(amount));
+      const formatAmount = amount => {
+        const value = Number(amount) || 0;
+        return Number.isInteger(value) ? value.toLocaleString()
+          : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+      };
+      const label = resource => `${resource.charAt(0).toUpperCase()}${resource.slice(1)}`;
       const row = document.createElement('div');
+      row.className = 'ea-trigger-row';
       row.dataset.eaTriggerItem = 'true';
-      row.textContent = `${def?.name || item.id} · ${Object.entries(cost || {})
-        .map(([resource, amount]) => `${amount} ${resource}`).join(' · ')}`;
+      const name = document.createElement('span');
+      name.className = 'ea-trigger-name';
+      name.textContent = def?.name || item.id;
+      const requires = document.createElement('span');
+      requires.className = 'ea-trigger-requires';
+      requires.textContent = resources.length
+        ? `requires ${resources.map(([resource, amount]) => `${formatAmount(amount)} ${label(resource)}`).join(' · ')}`
+        : 'requirements unavailable';
+      const stock = document.createElement('span');
+      stock.className = 'ea-trigger-stock';
+      stock.textContent = missing.length
+        ? missing.map(([resource]) => `${formatAmount(state.res?.[resource] || 0)} ${label(resource)}`).join(' · ')
+        : `Target ${formatAmount(item.target)}`;
+      const status = document.createElement('span');
+      status.className = 'ea-trigger-status';
+      status.textContent = missing.length ? 'waiting for supplies' : 'ready';
+      row.append(name, requires, stock, status);
       section.appendChild(row);
     }
     triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
