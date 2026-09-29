@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.28
+// @version      1.36.29
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1286,10 +1286,13 @@
         : !!state.techs?.[current.id]);
       const currentTriggerIndex = current
         ? triggers.findIndex(trigger => triggerKey(trigger) === current.triggerKey && trigger.enabled !== false) : -1;
-      if (currentCompleted || (current && currentTriggerIndex < 0)) {
+      const currentStillQualifies = current && currentTriggerIndex >= 0 &&
+        triggerRequirementMet(triggers[currentTriggerIndex], state, demandForTriggerAction(current, demand));
+      if (currentCompleted || (current && (currentTriggerIndex < 0 || !currentStillQualifies))) {
         triggeredQueueItems = triggeredQueueItems.filter(item => item.type !== type);
         saveTriggeredQueueItems();
         current = null;
+        demand = queuedDemand(state);
         changed = true;
       }
 
