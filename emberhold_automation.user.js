@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.33
+// @version      1.36.34
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -662,6 +662,29 @@
     });
   }
 
+  function storageExpansionTarget(state, demand) {
+    const capacityOf = api().helpers?.capacityOf;
+    if (typeof capacityOf !== 'function' ||
+        !Object.entries(demand || {}).some(([resource, amount]) => {
+          const capacity = Number(capacityOf(resource));
+          return Number.isFinite(capacity) && amount > capacity;
+        })) return null;
+
+    const defs = definitions().BUILDINGS || [];
+    for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
+      if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id) ||
+          !STORAGE_BUILDINGS.has(id) || state.queues?.build?.some(entry => entry.id === id)) continue;
+      const def = defs.find(item => item.id === id);
+      if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
+      const canBuild = api().helpers?.canBuild;
+      if (canBuild ? !canBuild(id) : state.trial?.id === 'overflow') continue;
+      const cost = typeof api().helpers?.buildingCost === 'function'
+        ? api().helpers.buildingCost(def) : def.cost;
+      return { id, cost };
+    }
+    return null;
+  }
+
   function autoFactory(state, demand) {
     if (!(state.bld?.factory > 0 || factoryWithoutPower(state)) ||
         !(api().actions?.chooseFactoryRecipe || api().action)) return;
@@ -670,6 +693,10 @@
     // Keep this reserve local so autoWonderStart can still test affordability
     // against the ordinary queue demand.
     demand = mergeDemand(demand, pendingWonderDemand(state));
+    // If a queued project exceeds current storage, produce the inputs for the
+    // storage building that can unblock it (often Factory-made Industrial Goods).
+    const storageTarget = storageExpansionTarget(state, demand);
+    if (storageTarget) demand = mergeDemand(demand, storageTarget.cost);
     const recipes = factoryRecipes().filter(recipe => factoryRecipeUnlocked(recipe, state));
     const byOutput = new Map(recipes.map(recipe => [recipe.id, recipe]));
     const stock = resource => Math.max(0, Number(state.res?.[resource] || 0));
@@ -1424,6 +1451,8 @@
   let coalFuelRecoveryLock = false;
 
   function autoPower(state, demand) {
+    const storageTarget = storageExpansionTarget(state, demand);
+    if (storageTarget) demand = mergeDemand(demand, storageTarget.cost);
     const power = state.power || api().getPower?.();
     if (!power || !Number.isFinite(power.generated) || !Number.isFinite(power.used) ||
         !power.buildings || !(api().actions?.setBuildingPower || api().action)) {
@@ -1537,11 +1566,11 @@
       const output = resource;
       const stock = state.res[resource] || 0;
       const capacity = api().helpers?.capacityOf?.(resource);
-      // A full store does not need replacement production, even when queued
-      // work or an ongoing consumer makes the net rate negative. Let the
-      // store fall below capacity before re-enabling the site.
-      if (Number.isFinite(capacity) && stock >= capacity) return 0;
+      // A full store does not need replacement production unless queued work
+      // still needs this resource. In that case, storage automation will add
+      // room for the reservation and this site's power must be enabled.
       if ((demand[output] || 0) > 0) return 3;
+      if (Number.isFinite(capacity) && stock >= capacity) return 0;
       // A selected Factory recipe is still subject to queued demand and stock
       // shortages, just like other powered production sites. Returning its
       // ordinary priority here strands queued Factory outputs without power.
@@ -1637,33 +1666,18 @@
 
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
-    const capacityOf = api().helpers?.capacityOf;
-    const queueNeedsMoreRoom = typeof capacityOf === 'function' &&
-      Object.entries(demand || {}).some(([resource, amount]) => {
-        const capacity = capacityOf(resource);
-        return Number.isFinite(capacity) && amount > capacity;
-      });
+    const storageTarget = storageExpansionTarget(state, demand);
 
     // A queued project whose required stock cannot fit is permanently stuck.
     // Let storage consume its reserved materials: it is the one exception to
     // ordinary queue reservations because it makes those reservations feasible.
-    if (queueNeedsMoreRoom) {
-      for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
-        if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id)) continue;
-        if (!STORAGE_BUILDINGS.has(id) || state.queues?.build?.some(entry => entry.id === id)) continue;
-        const def = defs.find(item => item.id === id);
-        if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
-        const canBuild = api().helpers?.canBuild;
-        if (canBuild ? !canBuild(id) : state.trial?.id === 'overflow') continue;
-        const cost = typeof api().helpers?.buildingCost === 'function'
-          ? api().helpers.buildingCost(def) : def.cost;
-        if (settings.crafting && craftMissingFor(cost, state, {})) return;
-        if (affordable(cost, state, {}) && invoke('build', id)) return;
+    if (storageTarget) {
+      if (settings.crafting && craftMissingFor(storageTarget.cost, state, {})) return;
+      if (affordable(storageTarget.cost, state, {}) && invoke('build', storageTarget.id)) return;
 
-        // Do not spend the scarce stock on unrelated construction while an
-        // available storage building is the only path to completing the queue.
-        return;
-      }
+      // Do not spend the scarce stock on unrelated construction while an
+      // available storage building is the only path to completing the queue.
+      return;
     }
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
       if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id)) continue;
@@ -2941,7 +2955,7 @@
     const current = state?.state || state;
     const power = current?.power;
     const powerText = power && Number.isFinite(power.generated) && Number.isFinite(power.used)
-      ? ` · Power ${power.generated.toFixed(1)} in / ${power.used.toFixed(1)} used; factories reserve ${((current.bld?.factory || 0) * FACTORY_POWER_REQUIREMENT).toFixed(1)}` : '';
+      ? ` · Power ${power.generated.toFixed(1)} capacity generated / ${power.used.toFixed(1)} allocated; factories reserve ${((current.bld?.factory || 0) * FACTORY_POWER_REQUIREMENT).toFixed(1)}` : '';
     if (status) {
       status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}${powerText}`;
       status.title = status.textContent;
