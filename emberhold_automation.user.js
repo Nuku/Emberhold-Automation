@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.35
+// @version      1.36.36
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -626,6 +626,14 @@
     return factoryRecipes().find(recipe => recipe.id === current) || factoryRecipes()[0];
   }
 
+  function selectedFactoryRecipes(state) {
+    const ids = Array.isArray(state.factoryRecipes)
+      ? state.factoryRecipes
+      : [state.factoryRecipe].filter(Boolean);
+    const selected = ids.map(id => factoryRecipes().find(recipe => recipe.id === id)).filter(Boolean);
+    return selected.length ? selected : [currentFactoryRecipe(state)].filter(Boolean);
+  }
+
   function factoryRecipeUnlocked(recipe, state) {
     return !!recipe && (!recipe.tech || state.techs?.[recipe.tech]);
   }
@@ -898,13 +906,14 @@
       ? Number(effectiveJobRate(id)) > 0
       : Number(defs[id].base) > 0;
     const idleHands = idleHandsActive(state);
-    // Tinkerers share the Factory recipe. Keep their inputs reserved for
-    // queued work in both strict and parallel queue modes.
-    const tinkererRecipe = currentFactoryRecipe(state);
-    const blockedTinkererInput = Object.entries(tinkererRecipe?.inputs || {}).some(([resource, amount]) =>
-      (demand[resource] || 0) > 0 &&
-      Number(state.res?.[resource] || 0) < (Number(demand[resource]) || 0) +
-        Math.max(1, Number(amount) || 0));
+    // Tinkerers share the selected Factory outputs. Divided Attention can
+    // select two recipes, so protect inputs for both (for example Wood for
+    // Tools and Iron/Coal for Steel) in either queue-order mode.
+    const blockedTinkererInput = selectedFactoryRecipes(state).some(recipe =>
+      Object.entries(recipe.inputs || {}).some(([resource, amount]) =>
+        (demand[resource] || 0) > 0 &&
+        Number(state.res?.[resource] || 0) < (Number(demand[resource]) || 0) +
+          Math.max(1, Number(amount) || 0)));
     const assignable = jobOrder.filter(id => id !== 'guard' &&
       !(id === 'forager' && idleHands) && !defs[id].targeted &&
       defs[id].res && jobUnlocked(defs[id]) &&
