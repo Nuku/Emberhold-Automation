@@ -10,6 +10,8 @@ Combat has its own opt-in toggle. While enabled, it hires and starts espionage a
 
 When the game's Strict queue order setting is enabled, resource reservations include only the first item in each queue, matching the game's processing order. If queued requirements exceed a resource's storage capacity, the Buildings automation prioritizes an available Storehouse, Deep Store, or Vault and may use the otherwise reserved materials to build it.
 
+Job automation also keeps the selected Factory recipe's inputs reserved for queued work in either queue-order mode. Tinkerers are released and held back when their recipe would consume those reserved inputs; other job planning continues normally.
+
 The script uses the page's synchronous `window.emberhold` API. It refreshes state between automation stages, uses current expedition costs, starts one explorer when an idle villager is available, and preserves targeted performers/explorers during ordinary job reassignment. Diplomat pause/resume requires both Jobs and Diplomacy enabled. Event subscriptions are optional.
 
 Personal build and research queues are available under the embedded Settings menu. They are separate from Emberhold's native queues: the next item in each personal queue reserves its ingredients, allows crafting and production to work toward those ingredients, and is submitted when affordable. Build and research personal targets may be pursued in the same automation pass, while existing native queue entries are never duplicated. Queue settings are included in text and JSON file export/import.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.34
+// @version      1.36.35
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -891,18 +891,30 @@
     const defs = definitions().JOBS || {};
     const effectiveJobRate = api().helpers?.jobProduction;
     const jobOrder = orderedIds(JOB_ORDER, Object.keys(defs));
+    const count = id => Number(state.jobs?.[id] || 0);
+    const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
     const knowledgeWorker = id => defs[id]?.res === 'knowledge';
     const productive = id => effectiveJobRate
       ? Number(effectiveJobRate(id)) > 0
       : Number(defs[id].base) > 0;
     const idleHands = idleHandsActive(state);
+    // Tinkerers share the Factory recipe. Keep their inputs reserved for
+    // queued work in both strict and parallel queue modes.
+    const tinkererRecipe = currentFactoryRecipe(state);
+    const blockedTinkererInput = Object.entries(tinkererRecipe?.inputs || {}).some(([resource, amount]) =>
+      (demand[resource] || 0) > 0 &&
+      Number(state.res?.[resource] || 0) < (Number(demand[resource]) || 0) +
+        Math.max(1, Number(amount) || 0));
     const assignable = jobOrder.filter(id => id !== 'guard' &&
       !(id === 'forager' && idleHands) && !defs[id].targeted &&
       defs[id].res && jobUnlocked(defs[id]) &&
+      !(id === 'tinkerer' && blockedTinkererInput) &&
       (id === 'tinkerer' || productive(id)));
 
-    const count = id => Number(state.jobs?.[id] || 0);
-    const stock = id => Math.max(0, (state.res[id] || 0) - (demand[id] || 0));
+    if (blockedTinkererInput && count('tinkerer') > 0) {
+      releaseWorkers('tinkerer', count('tinkerer'));
+      state = snapshot();
+    }
     // Idle Hands turns every unassigned villager into a Forager. Clear any
     // dedicated Foragers and keep that job out of every planning path below.
     if (idleHands && count('forager') > 0) {
