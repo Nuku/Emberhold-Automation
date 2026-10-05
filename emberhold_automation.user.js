@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.37
+// @version      1.36.38
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -329,6 +329,7 @@
     };
     const knownCosts = {};
     const activeQueueIndex = {};
+    let unresolvedHead = false;
     for (const type of Object.keys(definitionsByType)) {
       activeQueueIndex[type] = (state.queues?.[type] || []).findIndex(entry => !queueEntryIgnored(entry));
       for (const [index, entry] of (state.queues?.[type] || []).entries()) {
