@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.38
+// @version      1.36.39
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -308,8 +308,10 @@
     return typeof cost === 'number' ? { knowledge: cost } : (cost || {});
   }
 
-  function queueEntryIgnored(entry) {
-    return entry?.ignored === true;
+  function queueEntryIgnored(type, entry) {
+    if (entry?.ignored === true) return true;
+    const cost = queueCost(type, entry);
+    return !!cost && storageCannotFit(cost);
   }
 
   function queuedDemand(state = snapshot()) {
@@ -329,11 +331,11 @@
     };
     const knownCosts = {};
     const activeQueueIndex = {};
-    let unresolvedHead = false;
+    const unresolvedHeads = [];
     for (const type of Object.keys(definitionsByType)) {
-      activeQueueIndex[type] = (state.queues?.[type] || []).findIndex(entry => !queueEntryIgnored(entry));
+      activeQueueIndex[type] = (state.queues?.[type] || []).findIndex(entry => !queueEntryIgnored(type, entry));
       for (const [index, entry] of (state.queues?.[type] || []).entries()) {
-        if (queueEntryIgnored(entry)) continue;
+        if (entry?.ignored === true) continue;
         // Beacon/air-control progress uses synthetic queue ids while its cost
         // still comes from the corresponding building definition.
         const definitionId = type === 'build' && /Stage$/.test(entry.id)
@@ -345,7 +347,7 @@
             ? (def ? researchCost(def) : entry.cost)
             : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
         if (!cost) {
-          if (index === activeQueueIndex[type]) unresolvedHead = true;
+          if (index === activeQueueIndex[type]) unresolvedHeads.push({ type, index });
           continue;
         }
         for (const [resource, amount] of Object.entries(cost)) {
@@ -359,10 +361,31 @@
     // after removing every resolved entry, including deferred queue items.
     // If several entries are unknown, conservatively reserve their combined
     // remainder rather than silently starving an unresolved head item.
-    if (unresolvedHead) {
+    if (unresolvedHeads.length) {
+      const unresolvedDemand = {};
       for (const [resource, amount] of Object.entries(api().helpers?.queueDemand?.() || {})) {
         const remainder = Math.max(0, amount - (knownCosts[resource] || 0));
-        if (remainder) gameDemand[resource] = (gameDemand[resource] || 0) + remainder;
+        if (remainder) unresolvedDemand[resource] = remainder;
+      }
+      if (unresolvedHeads.length === 1 && storageCannotFit(unresolvedDemand)) {
+        // Synthetic entries such as Wonder obstacles may not expose a cost.
+        // If the game's aggregate demand proves the head can never fit in
+        // storage, let the next feasible queue item drive resource production.
+        for (const { type, index } of unresolvedHeads) {
+          const queue = state.queues?.[type] || [];
+          const nextIndex = queue.findIndex((entry, candidate) => candidate > index &&
+            !queueEntryIgnored(type, entry));
+          if (nextIndex < 0) continue;
+          activeQueueIndex[type] = nextIndex;
+          const cost = queueCost(type, queue[nextIndex]);
+          for (const [resource, amount] of Object.entries(cost || {})) {
+            gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+          }
+        }
+      } else {
+        for (const [resource, amount] of Object.entries(unresolvedDemand)) {
+          gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+        }
       }
     }
     return mergeDemand(mergeDemand(mergeDemand(gameDemand, ownQueueDemand(state)), triggerQueueDemand()), migrationDemand(state));
@@ -1750,7 +1773,7 @@
       const queue = state.queues?.[type] || [];
       let activeEntrySeen = false;
       for (const entry of queue) {
-        if (queueEntryIgnored(entry)) continue;
+        if (queueEntryIgnored(type, entry)) continue;
         if (strict && activeEntrySeen) break;
         activeEntrySeen = true;
         const cost = queueCost(type, entry);
