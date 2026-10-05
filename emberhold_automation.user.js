@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.36
+// @version      1.36.37
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -308,6 +308,10 @@
     return typeof cost === 'number' ? { knowledge: cost } : (cost || {});
   }
 
+  function queueEntryIgnored(entry) {
+    return entry?.ignored === true;
+  }
+
   function queuedDemand(state = snapshot()) {
     const demand = !state?.settings?.strictQueueOrder ? (api().helpers?.queueDemand?.() || {}) : {};
     if (!state?.settings?.strictQueueOrder) {
@@ -324,9 +328,11 @@
       expedition: definitions().EXPEDITIONS || [],
     };
     const knownCosts = {};
-    let unresolvedHead = false;
+    const activeQueueIndex = {};
     for (const type of Object.keys(definitionsByType)) {
+      activeQueueIndex[type] = (state.queues?.[type] || []).findIndex(entry => !queueEntryIgnored(entry));
       for (const [index, entry] of (state.queues?.[type] || []).entries()) {
+        if (queueEntryIgnored(entry)) continue;
         // Beacon/air-control progress uses synthetic queue ids while its cost
         // still comes from the corresponding building definition.
         const definitionId = type === 'build' && /Stage$/.test(entry.id)
@@ -338,12 +344,12 @@
             ? (def ? researchCost(def) : entry.cost)
             : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
         if (!cost) {
-          if (index === 0) unresolvedHead = true;
+          if (index === activeQueueIndex[type]) unresolvedHead = true;
           continue;
         }
         for (const [resource, amount] of Object.entries(cost)) {
           knownCosts[resource] = (knownCosts[resource] || 0) + amount;
-          if (index === 0) gameDemand[resource] = (gameDemand[resource] || 0) + amount;
+          if (index === activeQueueIndex[type]) gameDemand[resource] = (gameDemand[resource] || 0) + amount;
         }
       }
     }
@@ -1741,8 +1747,11 @@
     const demand = queuedDemand(state);
     for (const type of ['build', 'research', 'expedition']) {
       const queue = state.queues?.[type] || [];
-      for (const [index, entry] of queue.entries()) {
-        if (strict && index > 0) break;
+      let activeEntrySeen = false;
+      for (const entry of queue) {
+        if (queueEntryIgnored(entry)) continue;
+        if (strict && activeEntrySeen) break;
+        activeEntrySeen = true;
         const cost = queueCost(type, entry);
         if (cost && craftMissingFor(cost, state, demandForQueuedAction(type, entry, demand))) return true;
       }
