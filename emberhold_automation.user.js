@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.39
+// @version      1.36.40
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -66,6 +66,7 @@
   let lastInvocationResult;
   let combatSuccessStreak = 0;
   let combatLossStreak = 0;
+  let idleFactoryTicks = 0;
   const pausedDiplomats = Object.create(null);
   let uiSettings = loadUiSettings();
   let detailedSettingsNode = null;
@@ -751,6 +752,30 @@
     if (trialGoal && hasRoom(trialGoal.resource) && stock(trialGoal.resource) < trialGoal.amount) {
       const recipe = byOutput.get(trialGoal.resource);
       if (recipe && !goals.includes(recipe)) goals.push(recipe);
+    }
+    const idleFactoryGoal = !goals.length && !trialGoal &&
+      !(state.queues?.build?.length || state.queues?.research?.length || state.queues?.expedition?.length);
+    if (idleFactoryGoal) {
+      // Keep the shared Factory line moving when nothing else needs attention.
+      // Hold each recipe for five automation passes, then favor the output
+      // with the smallest share of its storage.
+      idleFactoryTicks++;
+      if (idleFactoryTicks % 5 !== 0) return;
+      const available = recipes.filter(recipe => Object.entries(recipe.inputs || {}).every(
+        ([input, amount]) => stock(input) >= (Number(amount) || 0)));
+      const idleTarget = available
+        .map((recipe, index) => {
+          const capacity = typeof capacityOf === 'function' ? Number(capacityOf(recipe.id)) : NaN;
+          const ratio = Number.isFinite(capacity) && capacity > 0
+            ? stock(recipe.id) / capacity : 0;
+          return { recipe, ratio, index };
+        })
+        .filter(({ recipe }) => {
+          const capacity = typeof capacityOf === 'function' ? Number(capacityOf(recipe.id)) : NaN;
+          return !Number.isFinite(capacity) || capacity <= 0 || stock(recipe.id) < capacity;
+        })
+        .sort((a, b) => a.ratio - b.ratio || a.index - b.index)[0]?.recipe;
+      if (idleTarget) goals.push(idleTarget);
     }
     if (!goals.length) return;
 
