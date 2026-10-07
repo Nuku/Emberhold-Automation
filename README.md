@@ -26,6 +26,8 @@ Priority lists are preferences rather than allowlists: new research, buildings, 
 
 Run the regression checks with `node --test tests/automation.test.cjs`.
 
+Automation waits the configured loop delay after each completed pass (minimum 0.5 seconds). Invalid imported delays fall back to one second. Startup checks back off to five seconds while the game API is unavailable. Game events and panel mutations share a refresh at most every 250 milliseconds; unchanged status and trigger rows are retained to avoid redundant redraws.
+
 Food deficits are handled before queued-project staffing: miners can donate workers even when a queued project still demands Stone. Other jobs with a population-limited capacity are filled before queue-specific staffing. The planner uses the game's net production rate directly.
 
 Performer staffing accounts for crowding, Living Blocks, and conquered trade partners, with a buffer for winter storms and continued morale recovery. It immediately recruits idle villagers or surplus resource workers, preserving food workers, knowledge workers, targeted jobs, and production needed for ongoing consumption. Food shortages take priority. When morale falls below 25, the normal performer target is doubled until morale reaches 25, then staffing returns to the normal target. At maximum morale, 53 villagers without Living Blocks or conquered towns require five performers.

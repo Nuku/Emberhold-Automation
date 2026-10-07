@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.40
+// @version      1.36.41
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -73,6 +73,10 @@
   let triggeredQueueItems = loadTriggeredQueueItems();
   let triggerQueueObserver = null;
   let watchedTriggerQueuePanel = null;
+  let panelRefreshTimer = null;
+  let cachedSettingsHost = null;
+  let bootDelay = 250;
+  let timerGeneration = 0;
 
   function loadTriggeredQueueItems() {
     try {
@@ -101,7 +105,7 @@
       trigger.actionType === 'research' ? 'research' : 'build', trigger.actionId, Number(trigger.count) || 0]);
   }
 
-  function syncTriggeredQueue() {
+  function syncTriggeredQueue(state) {
     const panel = document.querySelector('#queue-panel');
     if (!panel) return;
     triggerQueueObserver?.disconnect();
@@ -144,8 +148,12 @@
     }
     const heading = panel.querySelector('#queue-heading');
     if (heading?.nextElementSibling !== section) heading?.insertAdjacentElement('afterend', section);
-    section.querySelectorAll('[data-ea-trigger-item]').forEach(node => node.remove());
-    const state = snapshot();
+    state = state?.state || state || snapshot();
+    if (!state) {
+      triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
+      return;
+    }
+    const rows = [];
     for (const type of ['build', 'research']) {
       const item = triggeredQueueItems.find(entry => entry.type === type);
       if (!item) continue;
@@ -160,27 +168,35 @@
           : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
       };
       const label = resource => `${resource.charAt(0).toUpperCase()}${resource.slice(1)}`;
-      const row = document.createElement('div');
-      row.className = 'ea-trigger-row';
-      row.dataset.eaTriggerItem = 'true';
-      const name = document.createElement('span');
-      name.className = 'ea-trigger-name';
-      name.textContent = def?.name || item.id;
-      const requires = document.createElement('span');
-      requires.className = 'ea-trigger-requires';
-      requires.textContent = resources.length
+      const name = def?.name || item.id;
+      const requires = resources.length
         ? `requires ${resources.map(([resource, amount]) => `${formatAmount(amount)} ${label(resource)}`).join(' · ')}`
         : 'requirements unavailable';
-      const stock = document.createElement('span');
-      stock.className = 'ea-trigger-stock';
-      stock.textContent = missing.length
+      const stock = missing.length
         ? missing.map(([resource]) => `${formatAmount(state.res?.[resource] || 0)} ${label(resource)}`).join(' · ')
         : `Target ${formatAmount(item.target)}`;
-      const status = document.createElement('span');
-      status.className = 'ea-trigger-status';
-      status.textContent = missing.length ? 'waiting for supplies' : 'ready';
-      row.append(name, requires, stock, status);
-      section.appendChild(row);
+      const status = missing.length ? 'waiting for supplies' : 'ready';
+      rows.push({ name, requires, stock, status });
+    }
+    // Game events often report identical state. Keep existing rows so they
+    // do not generate further body mutations or lose focus unnecessarily.
+    const renderKey = JSON.stringify(rows);
+    const existingRows = section.querySelectorAll('[data-ea-trigger-item]');
+    if (section._eaRenderKey !== renderKey || existingRows.length !== rows.length) {
+      existingRows.forEach(node => node.remove());
+      rows.forEach(values => {
+        const row = document.createElement('div');
+        row.className = 'ea-trigger-row';
+        row.dataset.eaTriggerItem = 'true';
+        for (const [key, value] of Object.entries(values)) {
+          const span = document.createElement('span');
+          span.className = `ea-trigger-${key}`;
+          span.textContent = value;
+          row.appendChild(span);
+        }
+        section.appendChild(row);
+      });
+      section._eaRenderKey = renderKey;
     }
     triggerQueueObserver?.observe(panel, { childList: true, subtree: true });
   }
@@ -190,7 +206,9 @@
     if (!panel || panel === watchedTriggerQueuePanel || typeof MutationObserver === 'undefined') return;
     watchedTriggerQueuePanel = panel;
     triggerQueueObserver?.disconnect();
-    triggerQueueObserver = new MutationObserver(() => syncTriggeredQueue());
+    triggerQueueObserver = new MutationObserver(() => {
+      if (triggeredQueueItems.length) schedulePanelRefresh();
+    });
     triggerQueueObserver.observe(panel, { childList: true, subtree: true });
     syncTriggeredQueue();
   }
@@ -1642,11 +1660,10 @@
       const output = resource;
       const stock = state.res[resource] || 0;
       const capacity = api().helpers?.capacityOf?.(resource);
-      // A full store does not need replacement production unless queued work
-      // still needs this resource. In that case, storage automation will add
-      // room for the reservation and this site's power must be enabled.
+      // A full store with its reservation already covered wastes power.
+      // Keep power for unmet reservations: storage automation can add room.
+      if (Number.isFinite(capacity) && stock >= capacity && stock >= (demand[output] || 0)) return 0;
       if ((demand[output] || 0) > 0) return 3;
-      if (Number.isFinite(capacity) && stock >= capacity) return 0;
       // A selected Factory recipe is still subject to queued demand and stock
       // shortages, just like other powered production sites. Returning its
       // ordinary priority here strands queued Factory outputs without power.
@@ -2344,14 +2361,14 @@
           const resource = jobDefs[id]?.res;
           return !!resource && Number(demand[resource] || 0) > 0;
         };
-        const donorIds = () => Object.keys(snapshot()?.jobs || state.jobs || {})
+        const donorIds = jobs => Object.keys(jobs)
           .filter(id => id !== 'guard' && jobDefs[id] && !jobDefs[id].targeted &&
             !workingOnDemand(id) &&
-            Number((snapshot()?.jobs || state.jobs)[id] || 0) > donorMinimum(id));
+            Number(jobs[id] || 0) > donorMinimum(id));
         let available = availableWorkers(state);
         while (available < 2 - workers) {
           const jobs = snapshot()?.jobs || state.jobs || {};
-          const donor = donorIds().sort((a, b) => Number(jobs[b] || 0) - Number(jobs[a] || 0))[0];
+          const donor = donorIds(jobs).sort((a, b) => Number(jobs[b] || 0) - Number(jobs[a] || 0))[0];
           if (!donor) break;
           const before = jobCount(donor);
           const target = Math.max(donorMinimum(donor), before - Math.max(1, 2 - workers - available));
@@ -2402,12 +2419,11 @@
       const resource = jobDefs[id]?.res;
       return !!resource && Number(demand[resource] || 0) > 0;
     };
-    const donorIds = () => Object.keys(snapshot()?.jobs || state.jobs || {})
+    const donorIds = jobs => Object.keys(jobs)
       .filter(id => id !== 'guard' && jobDefs[id] && !jobDefs[id].targeted &&
         !workingOnDemand(id) &&
-        Number((snapshot()?.jobs || state.jobs)[id] || 0) > donorMinimum(id))
+        Number(jobs[id] || 0) > donorMinimum(id))
       .sort((a, b) => {
-        const jobs = snapshot()?.jobs || state.jobs || {};
         const aOrder = JOB_ORDER.indexOf(a);
         const bOrder = JOB_ORDER.indexOf(b);
         return Number(jobs[b] || 0) - Number(jobs[a] || 0) ||
@@ -2415,7 +2431,7 @@
       });
     let available = availableWorkers(state);
     while (available < needed) {
-      const donor = donorIds()[0];
+      const donor = donorIds(snapshot()?.jobs || state.jobs || {})[0];
       if (!donor) break;
       const before = jobCount(donor);
       const target = Math.max(donorMinimum(donor), before - Math.max(1, needed - available));
@@ -2435,12 +2451,14 @@
     try {
       // Emberhold may redraw its panels; remount the embedded controls if the
       // host panel was replaced during a tab or view change.
-      makePanel();
+      if (typeof MutationObserver === 'undefined') makePanel();
       if (!snapshot()) return;
       lastAction = 'Scanning Emberhold';
-      const stateBeforeTriggers = JSON.stringify(snapshot());
-      autoTriggers(snapshot(), queuedDemand(snapshot()));
-      if (JSON.stringify(snapshot()) !== stateBeforeTriggers) {
+      const triggerState = snapshot();
+      const hasTriggers = triggeredQueueItems.length || settings.triggers?.length;
+      const stateBeforeTriggers = hasTriggers ? JSON.stringify(triggerState) : null;
+      if (hasTriggers) autoTriggers(triggerState, queuedDemand(triggerState));
+      if (hasTriggers && JSON.stringify(snapshot()) !== stateBeforeTriggers) {
         updatePanel(snapshot());
         return;
       }
@@ -2460,13 +2478,14 @@
         ['combat', autoCombat],
         ['wonderHandle', autoWonderHandle], ['wonderStart', autoWonderStart],
       ]) {
-        if (!logicValue(setting, snapshot(), settings[setting])) continue;
+        const state = snapshot();
+        if (!logicValue(setting, state, settings[setting])) continue;
         // autoJobs can immediately reclaim a villager that autoMorale just
         // moved into performers (usually to satisfy a wood shortage). Let the
         // targeted morale assignment settle for one tick before ordinary job
         // balancing runs again.
         if (step === autoJobs && moraleChanged) continue;
-        const changed = step(snapshot(), queuedDemand());
+        const changed = step(state, queuedDemand(state));
         if (step === autoMorale && changed) moraleChanged = true;
       }
       if (lastAction === 'Scanning Emberhold') lastAction = 'No eligible action';
@@ -2485,39 +2504,59 @@
       '#resources', '#left-panel', '#leftPanel', '#sidebar', '#game-sidebar',
       'aside', 'main', '[role="main"]', '#app', '#game',
     ];
-    return selectors.map(selector => document.querySelector(selector)).find(Boolean) || document.body;
+    for (const selector of selectors) {
+      const host = document.querySelector(selector);
+      if (host) return host;
+    }
+    return document.body;
   }
 
   function gameSettingsHost() {
+    if (cachedSettingsHost?.isConnected) return cachedSettingsHost;
     const settingsPanel = document.querySelector('#panel-settings');
     if (settingsPanel) {
       const chronicleTools = Array.from(settingsPanel.querySelectorAll('h2.section'))
         .find(node => /^\s*chronicle tools\s*$/i.test(node.textContent || ''));
-      if (chronicleTools) return settingsPanel;
+      if (chronicleTools) return (cachedSettingsHost = settingsPanel);
+      return null;
     }
     const chronicleHeading = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,legend,p,div,section,span'))
       .filter(node => /^\s*chronicle tools\s*$/i.test(node.textContent || ''))
       .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0];
-    if (chronicleHeading) return chronicleHeading.closest('section, article') || chronicleHeading.parentElement;
+    if (chronicleHeading) return (cachedSettingsHost = chronicleHeading.closest('section, article') || chronicleHeading.parentElement);
 
     // Avoid generic `.settings` selectors: Emberhold also uses that name for
     // the navigation button, which would place the controls beside the tab.
     const selectors = ['#settings-view', '.settings-view', '[data-screen="settings"]', '[data-view="settings"]'];
-    return selectors.map(selector => document.querySelector(selector))
-      .find(node => node && !['BUTTON', 'A'].includes(node.tagName)) || null;
+    for (const selector of selectors) {
+      const host = document.querySelector(selector);
+      if (host && !['BUTTON', 'A'].includes(host.tagName)) return (cachedSettingsHost = host);
+    }
+    return null;
+  }
+
+  function schedulePanelRefresh() {
+    // A bounded throttle coalesces bursts without postponing updates forever
+    // when the game continuously redraws resource and queue panels.
+    if (panelRefreshTimer !== null) return;
+    panelRefreshTimer = setTimeout(() => {
+      panelRefreshTimer = null;
+      watchTriggeredQueue();
+      makePanel();
+      updatePanel(snapshot());
+    }, 250);
   }
 
   function watchGamePanels() {
     if (typeof MutationObserver === 'undefined' || !document.body || document.body.dataset.eaObserved) return;
     document.body.dataset.eaObserved = 'true';
-    const observer = new MutationObserver(() => {
-      watchTriggeredQueue();
-      const panel = document.getElementById('emberhold-automation');
-      const host = panelHost();
-      const settingsHost = gameSettingsHost();
-      const panelNeedsMount = !panel?.isConnected || (host !== document.body && panel.parentElement !== host);
-      const settingsNeedMount = detailedSettingsNode && settingsHost && !settingsMounted(settingsHost, detailedSettingsNode);
-      if (panelNeedsMount || settingsNeedMount) makePanel();
+    const observer = new MutationObserver(records => {
+      const changed = records.some(record => {
+        // Ignore our own render work and ordinary text-only counter updates.
+        if (record.target.closest?.('#emberhold-automation, #emberhold-automation-settings, #ea-trigger-queue')) return false;
+        return [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1);
+      });
+      if (changed) schedulePanelRefresh();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -3036,24 +3075,41 @@
     const powerText = power && Number.isFinite(power.generated) && Number.isFinite(power.used)
       ? ` · Power ${power.generated.toFixed(1)} capacity generated / ${power.used.toFixed(1)} allocated; factories reserve ${((current.bld?.factory || 0) * FACTORY_POWER_REQUIREMENT).toFixed(1)}` : '';
     if (status) {
-      status.textContent = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}${powerText}`;
-      status.title = status.textContent;
+      const text = `${lastAction} · day ${Number.isFinite(current?.day) ? Math.floor(current.day) : 'unknown'}${powerText}`;
+      if (status.textContent !== text) status.textContent = text;
+      if (status.title !== text) status.title = text;
     }
-    syncTriggeredQueue();
+    syncTriggeredQueue(current);
   }
 
   function restart() {
-    if (timer) clearInterval(timer);
-    timer = setInterval(automationStep, Math.max(250, settings.interval));
+    if (timer !== null) clearTimeout(timer);
+    const generation = ++timerGeneration;
+    const configured = Number(settings.interval);
+    const delay = Number.isFinite(configured)
+      ? Math.min(2147483647, Math.max(500, configured)) : DEFAULTS.interval;
+    const tick = () => {
+      timer = null;
+      try {
+        automationStep();
+      } finally {
+        if (generation === timerGeneration) timer = setTimeout(tick, delay);
+      }
+    };
+    timer = setTimeout(tick, delay);
   }
 
   function boot() {
-    if (typeof api()?.getState !== 'function') return setTimeout(boot, 250);
+    if (typeof api()?.getState !== 'function') {
+      setTimeout(boot, bootDelay);
+      bootDelay = Math.min(5000, bootDelay * 2);
+      return;
+    }
     lastAction = api().actions ? 'Connected to Emberhold' : api().action ? 'Connected (legacy API)' : 'State API only — actions unavailable';
     watchGamePanels();
     watchTriggeredQueue();
     makePanel();
-    if (typeof api().subscribe === 'function') api().subscribe(updatePanel);
+    if (typeof api().subscribe === 'function') api().subscribe(schedulePanelRefresh);
     restart();
     automationStep();
   }

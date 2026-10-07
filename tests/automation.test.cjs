@@ -28,7 +28,8 @@ function harness() {
     autoCraft, autoResearch, autoDiplomacy, autoExpeditions, autoMigration, autoWonderStart, autoWonderHandle,
       autoCombat,
       automationStep, queuedDemand,
-      availableWorkers, boot };
+      availableWorkers, boot, restart, schedulePanelRefresh, syncTriggeredQueue, watchGamePanels,
+      rememberTriggeredQueueItem };
   `), context);
   function action(name, fn) {
     api.actions[name] = (...args) => { calls.push([name, ...args]); return fn(...args); };
@@ -1983,10 +1984,166 @@ test('filled finite jobs are not traded back and forth as donors', () => {
 test('boot works without an event subscription API', () => {
   const h = harness();
   let scheduled;
-  h.context.setInterval = (callback, interval) => { scheduled = { callback, interval }; return 1; };
+  h.context.setTimeout = (callback, interval) => { scheduled = { callback, interval }; return 1; };
   assert.doesNotThrow(() => h.boot());
-  assert.equal(scheduled.callback, h.automationStep);
+  assert.equal(typeof scheduled.callback, 'function');
   assert.equal(scheduled.interval, h.settings.interval);
   assert.match(h.status.textContent, /day 1/);
   assert.doesNotMatch(h.status.textContent, /Automation error:/);
+});
+
+function fakeTimers(h) {
+  const pending = new Map();
+  let nextId = 0;
+  h.context.setTimeout = (callback, delay) => {
+    pending.set(++nextId, { callback, delay });
+    return nextId;
+  };
+  h.context.clearTimeout = id => pending.delete(id);
+  return {
+    pending,
+    run() {
+      const [id, task] = pending.entries().next().value;
+      pending.delete(id);
+      task.callback();
+    },
+  };
+}
+
+test('automation waits a full delay after each completed pass and restart cancels stale work', () => {
+  const h = harness();
+  const timers = fakeTimers(h);
+  h.restart();
+  h.api.getState = () => {
+    assert.equal(timers.pending.size, 0, 'next tick must not be queued while the current pass runs');
+    return structuredClone(h.state);
+  };
+  timers.run();
+  assert.equal(timers.pending.size, 1);
+  assert.equal([...timers.pending.values()][0].delay, 1000);
+  h.settings.interval = 2000;
+  h.restart();
+  assert.equal(timers.pending.size, 1);
+  assert.equal([...timers.pending.values()][0].delay, 2000);
+});
+
+test('malformed and overflowing loop delays cannot create a hot timer', () => {
+  const h = harness();
+  const timers = fakeTimers(h);
+  for (const [value, expected] of [[NaN, 1000], ['bad', 1000], [Infinity, 1000],
+    [0, 500], [-100, 500], [250, 500], [500, 500], [1e12, 2147483647]]) {
+    h.settings.interval = value;
+    h.restart();
+    assert.equal(timers.pending.size, 1);
+    assert.equal([...timers.pending.values()][0].delay, expected);
+  }
+});
+
+test('API event bursts share one refresh and use the latest state', () => {
+  const h = harness();
+  const timers = fakeTimers(h);
+  let subscribed;
+  h.api.subscribe = callback => { subscribed = callback; };
+  h.boot();
+  timers.pending.clear();
+  let reads = 0;
+  h.api.getState = () => { reads++; return structuredClone(h.state); };
+  for (let i = 0; i < 100; i++) subscribed({ state: { day: -1 } });
+  assert.equal(timers.pending.size, 1);
+  assert.equal(reads, 0);
+  h.state.day = 9;
+  timers.run();
+  assert.equal(reads, 1);
+  assert.match(h.status.textContent, /day 9/);
+  subscribed();
+  assert.equal(timers.pending.size, 1, 'future events must still refresh');
+});
+
+test('panel observation ignores internal and text-only updates and coalesces structural changes', () => {
+  const h = harness();
+  const timers = fakeTimers(h);
+  let observe;
+  h.context.MutationObserver = class {
+    constructor(callback) { observe = callback; }
+    observe() {}
+  };
+  h.watchGamePanels();
+  observe([{ target: { closest: () => ({}) }, addedNodes: [{ nodeType: 1 }], removedNodes: [] }]);
+  observe([{ target: {}, addedNodes: [{ nodeType: 3 }], removedNodes: [] }]);
+  assert.equal(timers.pending.size, 0);
+  for (let i = 0; i < 100; i++) {
+    observe([{ target: {}, addedNodes: [], removedNodes: [{ nodeType: 1 }] }]);
+  }
+  assert.equal(timers.pending.size, 1);
+  assert.equal([...timers.pending.values()][0].delay, 250);
+});
+
+test('startup polling backs off to five seconds while the game API is absent', () => {
+  const h = harness();
+  const timers = fakeTimers(h);
+  h.context.window.emberhold = null;
+  h.boot();
+  for (const delay of [250, 500, 1000, 2000, 4000, 5000, 5000]) {
+    assert.equal(timers.pending.size, 1);
+    assert.equal([...timers.pending.values()][0].delay, delay);
+    timers.run();
+  }
+  h.context.window.emberhold = h.api;
+  timers.run();
+  assert.match(h.status.textContent, /day 1/);
+  assert.equal([...timers.pending.values()][0].delay, 1000);
+});
+
+test('trigger rows retain their nodes until displayed supplies change and recover after a redraw', () => {
+  const h = harness();
+  let created = 0;
+  function node() {
+    created++;
+    return {
+      children: [], dataset: {},
+      appendChild(child) { this.children.push(child); child.parent = this; },
+      remove() { this.parent.children = this.parent.children.filter(child => child !== this); },
+      querySelectorAll() { return this.children.filter(child => child.dataset.eaTriggerItem); },
+    };
+  }
+  const queue = node();
+  const heading = {
+    nextElementSibling: null,
+    insertAdjacentElement(position, section) {
+      this.nextElementSibling = section;
+      queue.appendChild(section);
+    },
+  };
+  h.context.localStorage.setItem = () => {};
+  h.context.document.head = node();
+  h.context.document.createElement = node;
+  h.context.document.querySelector = selector => {
+    if (selector === '#queue-panel') return queue;
+    if (selector === '#ea-trigger-queue-style') return {};
+    return null;
+  };
+  queue.querySelector = selector => selector === '#queue-heading' ? heading
+    : queue.children.find(child => child.id === 'ea-trigger-queue');
+  h.api.definitions.BUILDINGS = [{ id: 'hut', name: 'Hut', cost: { wood: 10 } }];
+  h.rememberTriggeredQueueItem('build', 'hut', 1, 'test');
+  const section = queue.children[0];
+  const original = section.children.find(child => child.dataset.eaTriggerItem);
+  const before = created;
+  for (let i = 0; i < 100; i++) h.syncTriggeredQueue(h.state);
+  assert.equal(created, before, 'identical state must not create DOM nodes');
+  assert.equal(section.children.find(child => child.dataset.eaTriggerItem), original);
+  h.state.res.wood = 5;
+  h.syncTriggeredQueue(h.state);
+  const updated = section.children.find(child => child.dataset.eaTriggerItem);
+  assert.notEqual(updated, original);
+  assert.equal(updated.children[2].textContent, '5 Wood');
+  updated.remove();
+  h.syncTriggeredQueue(h.state);
+  assert.equal(section.children.filter(child => child.dataset.eaTriggerItem).length, 1,
+    'removed rows must be restored even when the state is unchanged');
+  queue.children = [];
+  heading.nextElementSibling = null;
+  h.syncTriggeredQueue(h.state);
+  assert.equal(queue.children.length, 1, 'game redraw must restore the trigger section');
+  assert.equal(queue.children[0].children.find(child => child.dataset.eaTriggerItem).children[2].textContent, '5 Wood');
 });
