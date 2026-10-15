@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.41
+// @version      1.36.42
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -970,6 +970,10 @@
 
   function autoJobs(state, demand) {
     const defs = definitions().JOBS || {};
+    // Emberhold renamed this job from `tinkerer` to `tinker`; saves from the
+    // current game use the latter. Resolve it from the live definitions so
+    // recipe-worker planning follows the game's actual job ID.
+    const tinkererId = defs.tinkerer ? 'tinkerer' : defs.tinker ? 'tinker' : null;
     const effectiveJobRate = api().helpers?.jobProduction;
     const jobOrder = orderedIds(JOB_ORDER, Object.keys(defs));
     const count = id => Number(state.jobs?.[id] || 0);
@@ -990,11 +994,11 @@
     const assignable = jobOrder.filter(id => id !== 'guard' &&
       !(id === 'forager' && idleHands) && !defs[id].targeted &&
       defs[id].res && jobUnlocked(defs[id]) &&
-      !(id === 'tinkerer' && blockedTinkererInput) &&
-      (id === 'tinkerer' || productive(id)));
+      !(id === tinkererId && blockedTinkererInput) &&
+      (id === tinkererId || productive(id)));
 
-    if (blockedTinkererInput && count('tinkerer') > 0) {
-      releaseWorkers('tinkerer', count('tinkerer'));
+    if (blockedTinkererInput && tinkererId && count(tinkererId) > 0) {
+      releaseWorkers(tinkererId, count(tinkererId));
       state = snapshot();
     }
     // Idle Hands turns every unassigned villager into a Forager. Clear any
@@ -1177,8 +1181,8 @@
     // woodcutters needed for the capacity we are trying to fill, otherwise
     // staffing Tinkerers lowers their cap and causes a one-tick oscillation.
     const tinkererWoodMinimum = () => {
-      if (!defs.tinkerer || !Number.isFinite(jobLimit('tinkerer'))) return 0;
-      const target = Math.max(count('tinkerer'), jobLimit('tinkerer'));
+      if (!tinkererId || !Number.isFinite(jobLimit(tinkererId))) return 0;
+      const target = Math.max(count(tinkererId), jobLimit(tinkererId));
       return Math.max(0, (target - 1) * 5);
     };
     const donorMinimum = id => {
@@ -1248,19 +1252,19 @@
       // worker. Some game builds expose that capacity as uncapped (or omit
       // the cap), so do this explicitly instead of relying only on the
       // finite-job ordering below.
-      if (assignable.includes('tinkerer') && availableJobRoom('tinkerer') > 0) {
-        planned.set('tinkerer', 1);
+      if (tinkererId && assignable.includes(tinkererId) && availableJobRoom(tinkererId) > 0) {
+        planned.set(tinkererId, 1);
       }
       const finiteJobs = assignable
         .filter(id => Number.isFinite(jobLimit(id)) && jobLimit(id) < state.pop &&
           count(id) < jobLimit(id))
-        .sort((a, b) => Number(b === 'tinkerer') - Number(a === 'tinkerer'));
+        .sort((a, b) => Number(b === tinkererId) - Number(a === tinkererId));
       for (const id of finiteJobs) {
         const limit = jobLimit(id);
         const room = limit - count(id);
         // Give the first available finite seat to a Tinkerer so spare
         // villagers establish the job before filling other capped jobs.
-        planned.set(id, id === 'tinkerer' ? Math.min(1, room) : room);
+        planned.set(id, id === tinkererId ? Math.min(1, room) : room);
       }
     }
     for (const [id, resource, target] of [...demandNeeds, ...needs, ...specialistNeeds]) {
@@ -1277,8 +1281,8 @@
       }
     }
 
-    const tinkererNeedsWood = planned.has('tinkerer') &&
-      availableJobRoom('tinkerer') > 0;
+    const tinkererNeedsWood = !!tinkererId && planned.has(tinkererId) &&
+      availableJobRoom(tinkererId) > 0;
     const preferredWoodcutterMinimum = id => {
       if (id !== 'woodcutter' || !tinkererNeedsWood) return donorMinimum(id);
       // Wood output is intentionally expendable while a Tinkerer seat is
@@ -1733,7 +1737,9 @@
         (Number.isFinite(coalCapacity) && coal <= coalCapacity * 0.25);
     const woodCanCarryLoad = Number.isFinite(woodRate) && woodRate >= -1e-9 &&
       (!Number.isFinite(woodCapacity) || wood >= woodCapacity * 0.25);
-    const ids = ['steamPlant', 'forge', 'factory', 'tinkerer'];
+    const jobs = definitions().JOBS || {};
+    const tinkererId = jobs.tinkerer ? 'tinkerer' : jobs.tinker ? 'tinker' : 'tinkerer';
+    const ids = ['steamPlant', 'forge', 'factory', tinkererId];
     const usingWood = ids.some(id => {
       const total = Math.max(0, Math.floor(Number(totalOf(id)) || 0));
       return total > 0 && Math.max(0, Math.floor(Number(countOf(id, total)) || 0)) > 0;
