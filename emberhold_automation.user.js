@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.42
+// @version      1.36.43
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -1427,11 +1427,19 @@
     const def = queueDefinition(kind, trigger.requirementId);
     if (!def) return false;
     let met = unlocked(def, state);
-    if (type.endsWith('Affordable')) {
+    if (type.endsWith('Affordable') || type.endsWith('Clickable')) {
       const cost = kind === 'build'
         ? (api().helpers?.buildingCost?.(def) || def.cost)
         : researchCost(def);
-      met = met && affordable(cost, state, demand);
+      if (type.endsWith('Affordable')) {
+        // Affordable means every requested resource amount fits within storage,
+        // regardless of how much is currently in stock.
+        met = met && !storageCannotFit(cost);
+      } else {
+        // Clickable means the resources are already on hand right now.
+        met = met && Object.entries(cost || {}).every(([resource, amount]) =>
+          Number(state.res?.[resource] || 0) >= Number(amount));
+      }
     }
     return trigger.requirementResult === false ? !met : met;
   }
@@ -2857,19 +2865,20 @@
     const buildOptions = triggerOptions('build');
     const researchOptions = triggerOptions('research');
     const options = (type, selected) => `<option value="build"${type === 'build' ? ' selected' : ''}>Build</option><option value="research"${type === 'research' ? ' selected' : ''}>Research</option>`;
-    const requirements = ['buildingUnlocked', 'buildingAffordable', 'researchUnlocked', 'researchAffordable'];
+    const requirements = ['buildingUnlocked', 'buildingAffordable', 'buildingClickable',
+      'researchUnlocked', 'researchAffordable', 'researchClickable'];
     const requirementOptions = selected => requirements.map(value => `<option value="${value}"${selected === value ? ' selected' : ''}>${value.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase())}</option>`).join('');
     list.innerHTML = (settings.triggers || []).map((trigger, index) => {
       const reqBuild = trigger.requirement?.startsWith('building');
-      return `<div class="ea-trigger-row" data-trigger-index="${index}">
-        <label>Requirement <select data-trigger-requirement>${requirementOptions(trigger.requirement || 'researchUnlocked')}</select></label>
-        <select data-trigger-requirement-id>${reqBuild ? buildOptions : researchOptions}</select>
-        <label>Match <input type="checkbox" data-trigger-result${trigger.requirementResult === false ? '' : ' checked'}></label>
-        <label>Action <select data-trigger-action-type>${options(trigger.actionType || 'build')}</select></label>
-        <select data-trigger-action-id>${trigger.actionType === 'research' ? researchOptions : buildOptions}</select>
-        <label>Target total <input type="number" min="1" data-trigger-count value="${Number(trigger.count) || ''}" placeholder="max"></label>
-        <button type="button" data-trigger-up title="Move up">↑</button><button type="button" data-trigger-down title="Move down">↓</button><button type="button" data-trigger-remove>×</button>
-      </div>`;
+      return `<tr data-trigger-index="${index}">
+        <td><select aria-label="Requirement" data-trigger-requirement>${requirementOptions(trigger.requirement || 'researchUnlocked')}</select></td>
+        <td><select aria-label="Requirement value" data-trigger-requirement-id>${reqBuild ? buildOptions : researchOptions}</select></td>
+        <td><input type="checkbox" aria-label="Requirement result" data-trigger-result${trigger.requirementResult === false ? '' : ' checked'}></td>
+        <td><select aria-label="Action type" data-trigger-action-type>${options(trigger.actionType || 'build')}</select></td>
+        <td><select aria-label="Action" data-trigger-action-id>${trigger.actionType === 'research' ? researchOptions : buildOptions}</select></td>
+        <td><input type="number" min="1" aria-label="Target total" data-trigger-count value="${Number(trigger.count) || ''}" placeholder="max"></td>
+        <td class="ea-trigger-actions"><button type="button" data-trigger-up title="Move up">↑</button><button type="button" data-trigger-down title="Move down">↓</button><button type="button" data-trigger-copy title="Copy this row below">⑂</button><button type="button" data-trigger-remove title="Remove">×</button></td>
+      </tr>`;
     }).join('');
     list.querySelectorAll('[data-trigger-index]').forEach(row => {
       const index = Number(row.dataset.triggerIndex);
@@ -2890,6 +2899,10 @@
       row.querySelector('[data-trigger-count]').addEventListener('change', event => { trigger.count = Number(event.target.value) || 0; saveSettings(); });
       row.querySelector('[data-trigger-up]').addEventListener('click', () => moveTrigger(index, -1, panel));
       row.querySelector('[data-trigger-down]').addEventListener('click', () => moveTrigger(index, 1, panel));
+      row.querySelector('[data-trigger-copy]').addEventListener('click', () => {
+        settings.triggers.splice(index + 1, 0, JSON.parse(JSON.stringify(trigger)));
+        saveSettings(); refreshTriggers(panel);
+      });
       row.querySelector('[data-trigger-remove]').addEventListener('click', () => { settings.triggers.splice(index, 1); saveSettings(); refreshTriggers(panel); });
     });
   }
@@ -2937,8 +2950,13 @@
           #emberhold-automation .ea-queue-settings { display: grid; gap: .35rem; padding: .35rem 0; }
           #emberhold-automation .ea-queue-settings label { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
           #emberhold-automation .ea-queue-item { display: flex; justify-content: space-between; gap: .5rem; padding-left: .75rem; }
-          #emberhold-automation .ea-trigger-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)) auto auto auto; gap: .25rem; align-items: center; padding: .25rem 0; border-bottom: 1px solid currentColor; }
-          #emberhold-automation .ea-trigger-row select, #emberhold-automation .ea-trigger-row input { max-width: 100%; min-width: 0; }
+          #emberhold-automation .ea-trigger-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+          #emberhold-automation .ea-trigger-table th, #emberhold-automation .ea-trigger-table td { padding: .2rem; text-align: left; }
+          #emberhold-automation .ea-trigger-table th { font-size: .85em; }
+          #emberhold-automation .ea-trigger-table select, #emberhold-automation .ea-trigger-table input { width: 100%; max-width: 100%; min-width: 0; }
+          #emberhold-automation .ea-trigger-table input[type="checkbox"] { width: auto; }
+          #emberhold-automation .ea-trigger-actions { white-space: nowrap; }
+          #emberhold-automation .ea-trigger-actions button { padding: 0 .3rem; }
           #emberhold-automation [data-settings-text], #emberhold-automation [data-logic-text] { width: 100%; box-sizing: border-box; font: .8em monospace; }
           #emberhold-automation .ea-logic-editor { border-top: 1px solid currentColor; margin-top: .5rem; padding-top: .5rem; display: grid; gap: .35rem; }
           #emberhold-automation .ea-logic-help { opacity: .75; font-size: .85em; }
@@ -2993,8 +3011,8 @@
           </div></details>
           <details data-ui-category="triggers"><summary>Triggers</summary><div class="ea-queue-settings">
             <div><button type="button" data-trigger-reset>Reset Trigger Settings</button> <button type="button" data-trigger-add>Add New Trigger</button></div>
-            <div data-trigger-list></div>
-            <small>The first qualifying trigger in list order owns one separate build or research slot. A higher-priority match replaces the current trigger item of that type immediately. Trigger items stay in the Triggers section and complete directly when affordable, without entering Emberhold’s native queues. Staged buildings advance one stage per automation pass. Target total means the desired number completed/owned. Leave it blank to use the target’s normal maximum.</small>
+            <table class="ea-trigger-table"><colgroup><col style="width:16%"><col style="width:18%"><col style="width:6%"><col style="width:16%"><col style="width:18%"><col style="width:6%"><col style="width:20%"></colgroup><thead><tr><th colspan="3">Requirement</th><th colspan="4">Action</th></tr><tr><th>Type</th><th>Value</th><th title="Whether the requirement must be true or false">Result</th><th>Type</th><th>Id</th><th>Count</th><th></th></tr></thead><tbody data-trigger-list></tbody></table>
+            <small>Affordable means the full cost fits within storage limits. Clickable means the resources are on hand now. The first qualifying trigger in list order owns one separate build or research slot. A higher-priority match replaces the current trigger item of that type immediately. Trigger items stay in the Triggers section and complete directly when affordable, without entering Emberhold’s native queues. Staged buildings advance one stage per automation pass. Target total means the desired number completed/owned. Leave it blank to use the target’s normal maximum.</small>
           </div></details>
           <details data-ui-category="core"><summary>General</summary><div class="ea-settings-grid">
             ${settingInput('interval', 'Loop delay', 'select')}
