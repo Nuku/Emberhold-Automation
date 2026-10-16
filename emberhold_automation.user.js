@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.43
+// @version      1.36.44
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -161,7 +161,9 @@
       const cost = def && (type === 'build'
         ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
       const resources = Object.entries(cost || {});
-      const missing = resources.filter(([resource, amount]) => Number(state.res?.[resource] || 0) < Number(amount));
+      const actionDemand = demandForTriggerAction(item, queuedDemand(state));
+      const missing = resources.filter(([resource, amount]) =>
+        Math.max(0, Number(state.res?.[resource] || 0) - Number(actionDemand[resource] || 0)) < Number(amount));
       const formatAmount = amount => {
         const value = Number(amount) || 0;
         return Number.isInteger(value) ? value.toLocaleString()
@@ -173,9 +175,10 @@
         ? `requires ${resources.map(([resource, amount]) => `${formatAmount(amount)} ${label(resource)}`).join(' · ')}`
         : 'requirements unavailable';
       const stock = missing.length
-        ? missing.map(([resource]) => `${formatAmount(state.res?.[resource] || 0)} ${label(resource)}`).join(' · ')
+        ? missing.map(([resource]) => `${formatAmount(Math.max(0,
+          Number(state.res?.[resource] || 0) - Number(actionDemand[resource] || 0)))} ${label(resource)}`).join(' · ')
         : `Target ${formatAmount(item.target)}`;
-      const status = missing.length ? 'waiting for supplies' : 'ready';
+      const status = !resources.length || missing.length ? 'waiting for supplies' : 'ready';
       rows.push({ name, requires, stock, status });
     }
     // Game events often report identical state. Keep existing rows so they
