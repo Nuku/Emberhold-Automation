@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.47
+// @version      1.36.48
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -462,6 +462,17 @@
         : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry?.cost);
   }
 
+  function prospectiveBuildingCost(def) {
+    const getQueueCost = api().helpers?.queueCost;
+    if (typeof getQueueCost === 'function') {
+      try {
+        const cost = getQueueCost({ id: def.id });
+        if (cost && typeof cost === 'object' && Object.keys(cost).length) return cost;
+      } catch (_) { /* Fall through to the building definition. */ }
+    }
+    return api().helpers?.buildingCost?.(def) || def.cost;
+  }
+
   function storageCannotFit(cost) {
     const capacityOf = api().helpers?.capacityOf;
     if (typeof capacityOf !== 'function') return false;
@@ -505,7 +516,7 @@
     const def = id && queueDefinition(type, id);
     if (!def) return demand;
     const cost = type === 'build'
-      ? (api().helpers?.buildingCost?.(def) || def.cost)
+      ? prospectiveBuildingCost(def)
       : researchCost(def);
     const result = { ...(demand || {}) };
     for (const [resource, amount] of Object.entries(cost || {})) {
@@ -738,8 +749,8 @@
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
       const canBuild = api().helpers?.canBuild;
       if (canBuild ? !canBuild(id) : state.trial?.id === 'overflow') continue;
-      const cost = typeof api().helpers?.buildingCost === 'function'
-        ? api().helpers.buildingCost(def) : def.cost;
+      const cost = prospectiveBuildingCost(def);
+      if (storageCannotFit(cost)) continue;
       return { id, cost };
     }
     return null;
@@ -1797,8 +1808,8 @@
       const canBuild = api().helpers?.canBuild;
       if (canBuild ? !canBuild(id) :
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
-      const cost = typeof api().helpers?.buildingCost === 'function'
-        ? api().helpers.buildingCost(def) : def.cost;
+      const cost = prospectiveBuildingCost(def);
+      if (storageCannotFit(cost)) continue;
       // Supplying one building's missing dependency must not prevent later
       // buildings that are already affordable from being considered this pass.
       if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
