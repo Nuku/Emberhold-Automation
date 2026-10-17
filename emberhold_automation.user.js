@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.52
+// @version      1.36.53
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -17,7 +17,7 @@
 
   const SETTINGS_KEY = 'emberhold_automation_settings';
   const TRIGGER_QUEUE_KEY = `${SETTINGS_KEY}_trigger_queue`;
-  const IMPOSSIBLE_BUILDINGS_KEY = `${SETTINGS_KEY}_impossible_buildings`;
+  const BUILDING_COST_SCALE = 3;
   const DEFAULTS = {
     enabled: true,
     jobs: true,
@@ -61,7 +61,6 @@
   };
 
   let settings = loadSettings();
-  let impossibleBuildingCosts = loadImpossibleBuildingCosts();
   let timer = null;
   let busy = false;
   let lastAction = 'Waiting for Emberhold';
@@ -89,19 +88,6 @@
     } catch (_) {
       return [];
     }
-  }
-
-  function loadImpossibleBuildingCosts() {
-    try {
-      const costs = JSON.parse(localStorage.getItem(IMPOSSIBLE_BUILDINGS_KEY) || '{}');
-      return costs && typeof costs === 'object' && !Array.isArray(costs) ? costs : {};
-    } catch (_) {
-      return {};
-    }
-  }
-
-  function saveImpossibleBuildingCosts() {
-    localStorage.setItem(IMPOSSIBLE_BUILDINGS_KEY, JSON.stringify(impossibleBuildingCosts));
   }
 
   function saveTriggeredQueueItems() {
@@ -174,7 +160,7 @@
       if (!item) continue;
       const def = queueDefinition(type, item.id);
       const cost = def && (type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+        ? (prospectiveBuildingCost(def)) : researchCost(def));
       const resources = Object.entries(cost || {});
       const actionDemand = demandForTriggerAction(item, queuedDemand(state));
       const missing = resources.filter(([resource, amount]) =>
@@ -379,7 +365,7 @@
           ? entry.id.replace(/Stage$/, '') : entry.id;
         const def = definitionsByType[type].find(item => item.id === definitionId);
         const cost = api().helpers?.queueCost?.(entry) ?? (type === 'build'
-          ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry.cost
+          ? (def && prospectiveBuildingCost(def)) || entry.cost
           : type === 'research'
             ? (def ? researchCost(def) : entry.cost)
             : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry.cost);
@@ -471,7 +457,7 @@
   function queueCost(type, entry) {
     const def = queueDefinition(type, entry?.id);
     return api().helpers?.queueCost?.(entry) ?? (type === 'build'
-      ? (def && (api().helpers?.buildingCost?.(def) || def.cost)) || entry?.cost
+      ? (def && prospectiveBuildingCost(def)) || entry?.cost
       : type === 'research'
         ? (def ? researchCost(def) : entry?.cost)
         : (def && (api().helpers?.expeditionCost?.(def) || def.cost)) || entry?.cost);
@@ -485,9 +471,12 @@
         if (cost && typeof cost === 'object' && Object.keys(cost).length) return cost;
       } catch (_) { /* Fall through to the building definition. */ }
     }
-    return api().helpers?.buildingCost?.(def) || def.cost;
+    const cost = api().helpers?.buildingCost?.(def) || def.cost || {};
+    // The published game tripled building costs, but buildingCost still
+    // returns the pre-update amount.
+    return Object.fromEntries(Object.entries(cost).map(([resource, amount]) =>
+      [resource, Number(amount) * BUILDING_COST_SCALE]));
   }
-
   function storageCannotFit(cost) {
     const capacityOf = api().helpers?.capacityOf;
     if (typeof capacityOf !== 'function') return false;
@@ -497,58 +486,12 @@
     });
   }
 
-  function rememberImpossibleQueuedBuildings(state) {
-    let changed = false;
-    for (const entry of state.queues?.build || []) {
-      const def = queueDefinition('build', entry?.id);
-      const cost = def && queueCost('build', entry);
-      const name = def?.name || def?.id;
-      const row = name && [...(document.getElementById('queue-build')?.querySelectorAll('button') || [])]
-        .find(button => button.textContent.includes(name));
-      const visiblyImpossible = /Cannot be completed: exceeds storage capacity/i.test(row?.textContent || '');
-      if (!def || !((cost && storageCannotFit(cost)) || visiblyImpossible)) continue;
-      const capacityOf = api().helpers?.capacityOf;
-      const resources = Object.keys(cost || {}).length
-        ? Object.keys(cost) : Object.keys(def.cost || {});
-      const capacities = Object.fromEntries(resources.map(resource => [resource,
-        Number(typeof capacityOf === 'function' ? capacityOf(resource) : NaN)])
-        .filter(([, capacity]) => Number.isFinite(capacity)));
-      if (JSON.stringify(impossibleBuildingCosts[def.id]?.capacities) !== JSON.stringify(capacities)) {
-        impossibleBuildingCosts[def.id] = { capacities };
-        changed = true;
-      }
-      // The game can apply scaling that its building-cost helper does not
-      // expose. Trust the native queue's verdict and remove the stuck entry
-      // immediately, so it cannot block the queue or reserve resources.
-      if (visiblyImpossible && row) row.click();
-    }
-    for (const [id, memory] of Object.entries(impossibleBuildingCosts)) {
-      const capacities = memory?.capacities;
-      const capacityOf = api().helpers?.capacityOf;
-      const unchanged = capacities && Object.entries(capacities).every(([resource, previous]) =>
-        typeof capacityOf === 'function' && Number(capacityOf(resource)) === Number(previous));
-      if (!unchanged) {
-        delete impossibleBuildingCosts[id];
-        changed = true;
-      }
-    }
-    if (changed) saveImpossibleBuildingCosts();
-  }
-
-  function queueBuilding(id, state) {
-    if (!invoke('build', id)) return false;
-    // Check the native queue immediately. Its displayed cost accounts for
-    // scaling that may differ from the public prospective-cost helpers.
-    rememberImpossibleQueuedBuildings(snapshot() || state);
-    return !impossibleBuildingCosts[id];
-  }
-
   function triggerQueueDemand() {
     const demand = {};
     for (const item of triggeredQueueItems) {
       const def = queueDefinition(item.type, item.id);
       const cost = def && (item.type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+        ? (prospectiveBuildingCost(def)) : researchCost(def));
       for (const [resource, amount] of Object.entries(cost || {})) {
         demand[resource] = (demand[resource] || 0) + amount;
       }
@@ -563,7 +506,7 @@
       const def = id && queueDefinition(type, id);
       if (!def) continue;
       const cost = type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        ? (prospectiveBuildingCost(def))
         : researchCost(def);
       for (const [resource, amount] of Object.entries(cost || {})) {
         demand[resource] = (demand[resource] || 0) + amount;
@@ -589,7 +532,7 @@
   function demandForTriggerAction(item, demand) {
     const def = queueDefinition(item.type, item.id);
     const cost = def && (item.type === 'build'
-      ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def));
+      ? (prospectiveBuildingCost(def)) : researchCost(def));
     const result = { ...(demand || {}) };
     for (const [resource, amount] of Object.entries(cost || {})) {
       result[resource] = Math.max(0, (result[resource] || 0) - amount);
@@ -805,7 +748,7 @@
     const defs = definitions().BUILDINGS || [];
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
       if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id) ||
-          impossibleBuildingCosts[id] || !STORAGE_BUILDINGS.has(id) ||
+          !STORAGE_BUILDINGS.has(id) ||
           state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
@@ -1492,7 +1435,7 @@
     }
     if ((state.queues?.[type] || []).some(entry => entry.id === id)) return false;
     const cost = type === 'build'
-      ? (api().helpers?.buildingCost?.(def) || def.cost)
+      ? (prospectiveBuildingCost(def))
       : researchCost(def);
     return unlocked(def, state) && affordable(cost, state, demandForOwnAction(type, state, demand)) && invoke(action, id);
   }
@@ -1505,7 +1448,7 @@
     let met = unlocked(def, state);
     if (type.endsWith('Affordable') || type.endsWith('Clickable')) {
       const cost = kind === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost)
+        ? (prospectiveBuildingCost(def))
         : researchCost(def);
       if (type.endsWith('Affordable')) {
         // Affordable means every requested resource amount fits within storage,
@@ -1576,7 +1519,7 @@
         const target = Math.max(1, Number(trigger.count) || (type === 'build' ? Number(def.max || 1) : 1));
         const completed = type === 'build' ? Number(state.bld?.[id] || 0) : Number(!!state.techs?.[id]);
         const cost = type === 'build'
-          ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def);
+          ? (prospectiveBuildingCost(def)) : researchCost(def);
         if (completed >= target || storageCannotFit(cost)) continue;
         candidate = { index, trigger, id, target, triggerKey: triggerKey(trigger) };
         break;
@@ -1612,7 +1555,7 @@
       }
       if (!unlocked(def, state)) continue;
       const cost = type === 'build'
-        ? (api().helpers?.buildingCost?.(def) || def.cost) : researchCost(def);
+        ? (prospectiveBuildingCost(def)) : researchCost(def);
       const actionDemand = demandForTriggerAction(item, queuedDemand(state));
       if (!affordable(cost, state, actionDemand)) {
         // Trigger items bypass Emberhold's native queues, so their missing
@@ -1849,24 +1792,16 @@
 
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
-    rememberImpossibleQueuedBuildings(state);
 
     // A queued project whose required stock cannot fit is permanently stuck.
-    // Let storage consume its reserved materials: it is the one exception to
-    // ordinary queue reservations because it makes those reservations feasible.
-    let storageTarget = storageExpansionTarget(state, demand);
-    while (storageTarget) {
+    // Let an eligible storage building use the otherwise reserved materials.
+    const storageTarget = storageExpansionTarget(state, demand);
+    if (storageTarget) {
       if (settings.crafting && craftMissingFor(storageTarget.cost, state, {})) return;
-      if (affordable(storageTarget.cost, state, {})) {
-        if (queueBuilding(storageTarget.id, state)) return;
-        if (impossibleBuildingCosts[storageTarget.id]) {
-          storageTarget = storageExpansionTarget(state, demand);
-          continue;
-        }
-      }
+      if (affordable(storageTarget.cost, state, {}) && invoke('build', storageTarget.id)) return;
 
-      // Do not spend the scarce stock on unrelated construction while an
-      // available storage building is the only path to completing the queue.
+      // Do not spend scarce stock on unrelated construction while storage is
+      // the only way to make the queued project feasible.
       return;
     }
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
@@ -1878,16 +1813,13 @@
       if (canBuild ? !canBuild(id) :
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = prospectiveBuildingCost(def);
-      if (storageCannotFit(cost) || impossibleBuildingCosts[id]) continue;
+      if (storageCannotFit(cost)) continue;
       // Supplying one building's missing dependency must not prevent later
-      // buildings that are already affordable from being considered this pass.
+      // buildings that are already affordable from being considered.
       if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
-      if (affordable(cost, state, demand)) {
-        if (queueBuilding(id, state)) return;
-      }
+      if (affordable(cost, state, demand) && invoke('build', id)) return;
     }
   }
-
   function craftMissingFor(cost, state, demand, seen = new Set()) {
     const defs = definitions().CRAFTS || [];
     for (const [resource, amount] of Object.entries(cost || {})) {
