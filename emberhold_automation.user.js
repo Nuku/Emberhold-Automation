@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.50
+// @version      1.36.51
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -792,7 +792,8 @@
     const defs = definitions().BUILDINGS || [];
     for (const id of orderedIds(BUILD_ORDER, defs.map(def => def.id))) {
       if (triggeredQueueItems.some(item => item.type === 'build' && item.id === id) ||
-          !STORAGE_BUILDINGS.has(id) || state.queues?.build?.some(entry => entry.id === id)) continue;
+          impossibleBuildingCosts[id] || !STORAGE_BUILDINGS.has(id) ||
+          state.queues?.build?.some(entry => entry.id === id)) continue;
       const def = defs.find(item => item.id === id);
       if (!def || state.bld[id] >= def.max || !unlocked(def, state)) continue;
       const canBuild = api().helpers?.canBuild;
