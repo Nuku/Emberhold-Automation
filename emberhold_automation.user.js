@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.48
+// @version      1.36.49
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -17,6 +17,7 @@
 
   const SETTINGS_KEY = 'emberhold_automation_settings';
   const TRIGGER_QUEUE_KEY = `${SETTINGS_KEY}_trigger_queue`;
+  const IMPOSSIBLE_BUILDINGS_KEY = `${SETTINGS_KEY}_impossible_buildings`;
   const DEFAULTS = {
     enabled: true,
     jobs: true,
@@ -60,6 +61,7 @@
   };
 
   let settings = loadSettings();
+  let impossibleBuildingCosts = loadImpossibleBuildingCosts();
   let timer = null;
   let busy = false;
   let lastAction = 'Waiting for Emberhold';
@@ -87,6 +89,19 @@
     } catch (_) {
       return [];
     }
+  }
+
+  function loadImpossibleBuildingCosts() {
+    try {
+      const costs = JSON.parse(localStorage.getItem(IMPOSSIBLE_BUILDINGS_KEY) || '{}');
+      return costs && typeof costs === 'object' && !Array.isArray(costs) ? costs : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveImpossibleBuildingCosts() {
+    localStorage.setItem(IMPOSSIBLE_BUILDINGS_KEY, JSON.stringify(impossibleBuildingCosts));
   }
 
   function saveTriggeredQueueItems() {
@@ -466,7 +481,7 @@
     const getQueueCost = api().helpers?.queueCost;
     if (typeof getQueueCost === 'function') {
       try {
-        const cost = getQueueCost({ id: def.id });
+        const cost = getQueueCost({ id: def.id, type: 'build' });
         if (cost && typeof cost === 'object' && Object.keys(cost).length) return cost;
       } catch (_) { /* Fall through to the building definition. */ }
     }
@@ -480,6 +495,26 @@
       const capacity = Number(capacityOf(resource));
       return Number.isFinite(capacity) && Number(amount) > capacity;
     });
+  }
+
+  function rememberImpossibleQueuedBuildings(state) {
+    let changed = false;
+    for (const entry of state.queues?.build || []) {
+      const def = queueDefinition('build', entry?.id);
+      const cost = def && queueCost('build', entry);
+      if (!def || !cost || !storageCannotFit(cost)) continue;
+      if (JSON.stringify(impossibleBuildingCosts[def.id]) !== JSON.stringify(cost)) {
+        impossibleBuildingCosts[def.id] = cost;
+        changed = true;
+      }
+    }
+    for (const [id, cost] of Object.entries(impossibleBuildingCosts)) {
+      if (!storageCannotFit(cost)) {
+        delete impossibleBuildingCosts[id];
+        changed = true;
+      }
+    }
+    if (changed) saveImpossibleBuildingCosts();
   }
 
   function triggerQueueDemand() {
@@ -1787,6 +1822,7 @@
 
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
+    rememberImpossibleQueuedBuildings(state);
     const storageTarget = storageExpansionTarget(state, demand);
 
     // A queued project whose required stock cannot fit is permanently stuck.
@@ -1809,7 +1845,7 @@
       if (canBuild ? !canBuild(id) :
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = prospectiveBuildingCost(def);
-      if (storageCannotFit(cost)) continue;
+      if (storageCannotFit(cost) || storageCannotFit(impossibleBuildingCosts[id])) continue;
       // Supplying one building's missing dependency must not prevent later
       // buildings that are already affordable from being considered this pass.
       if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
@@ -2330,6 +2366,11 @@
     return (state.queues?.build || []).some(entry => isWonderObstacleEntry(entry, state.landing));
   }
 
+  function wonderPathBlocked() {
+    return /\bPath blocked\s*:/i.test(
+      document.getElementById('panel-wonders')?.textContent || '');
+  }
+
   function isWonderObstacleEntry(entry, landing) {
     const id = String(entry?.id || '');
     const kind = String(entry?.type || entry?.kind || '');
@@ -2395,14 +2436,17 @@
     const section = (record.sections || []).findIndex(done => !done);
     if (section < 0) return; // The final fate is deliberately left manual.
 
-    // Construction workers do not need a full expedition party. Keep only a
-    // small two-person foothold while an obstacle is waiting in the queue.
-    if (wonderObstacleQueued(state)) {
-      // An obstacle pauses the chronicle as soon as the expedition reaches
-      // it. Queue promotion must therefore happen from this already-queued
-      // branch; waiting for wonderObstacle() would deadlock behind the pause.
-      prioritizeWonderObstacle(state);
-      const workers = Math.max(0, Math.floor(Number(state.rapture?.workers || 0)));
+    // Keep only a small foothold while a Wonder passage is blocked. Newer
+    // game builds expose the obstacle in the Wonder panel while its charge is
+    // unaffordable, before it appears in the build queue.
+    const obstacleQueued = wonderObstacleQueued(state);
+    if (obstacleQueued || wonderPathBlocked()) {
+      if (!obstacleQueued && wonderPathBlocked() && api().actions?.wonderObstacle) {
+        invoke('wonderObstacle');
+      }
+      const current = snapshot() || state;
+      if (wonderObstacleQueued(current)) prioritizeWonderObstacle(current);
+      const workers = Math.max(0, Math.floor(Number(current.rapture?.workers || 0)));
       if (workers > 2) invoke('assignRapture', 2 - workers);
       else if (workers < 2) {
         const jobDefs = definitions().JOBS || {};
@@ -2415,7 +2459,7 @@
           .filter(id => id !== 'guard' && jobDefs[id] && !jobDefs[id].targeted &&
             !workingOnDemand(id) &&
             Number(jobs[id] || 0) > donorMinimum(id));
-        let available = availableWorkers(state);
+        let available = availableWorkers(current);
         while (available < 2 - workers) {
           const jobs = snapshot()?.jobs || state.jobs || {};
           const donor = donorIds(jobs).sort((a, b) => Number(jobs[b] || 0) - Number(jobs[a] || 0))[0];
