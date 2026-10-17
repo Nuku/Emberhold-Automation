@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.51
+// @version      1.36.52
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -508,7 +508,8 @@
       const visiblyImpossible = /Cannot be completed: exceeds storage capacity/i.test(row?.textContent || '');
       if (!def || !((cost && storageCannotFit(cost)) || visiblyImpossible)) continue;
       const capacityOf = api().helpers?.capacityOf;
-      const resources = Object.keys(cost || def.cost || {});
+      const resources = Object.keys(cost || {}).length
+        ? Object.keys(cost) : Object.keys(def.cost || {});
       const capacities = Object.fromEntries(resources.map(resource => [resource,
         Number(typeof capacityOf === 'function' ? capacityOf(resource) : NaN)])
         .filter(([, capacity]) => Number.isFinite(capacity)));
@@ -516,6 +517,10 @@
         impossibleBuildingCosts[def.id] = { capacities };
         changed = true;
       }
+      // The game can apply scaling that its building-cost helper does not
+      // expose. Trust the native queue's verdict and remove the stuck entry
+      // immediately, so it cannot block the queue or reserve resources.
+      if (visiblyImpossible && row) row.click();
     }
     for (const [id, memory] of Object.entries(impossibleBuildingCosts)) {
       const capacities = memory?.capacities;
@@ -528,6 +533,14 @@
       }
     }
     if (changed) saveImpossibleBuildingCosts();
+  }
+
+  function queueBuilding(id, state) {
+    if (!invoke('build', id)) return false;
+    // Check the native queue immediately. Its displayed cost accounts for
+    // scaling that may differ from the public prospective-cost helpers.
+    rememberImpossibleQueuedBuildings(snapshot() || state);
+    return !impossibleBuildingCosts[id];
   }
 
   function triggerQueueDemand() {
@@ -1837,14 +1850,20 @@
   function autoBuildings(state, demand) {
     const defs = definitions().BUILDINGS || [];
     rememberImpossibleQueuedBuildings(state);
-    const storageTarget = storageExpansionTarget(state, demand);
 
     // A queued project whose required stock cannot fit is permanently stuck.
     // Let storage consume its reserved materials: it is the one exception to
     // ordinary queue reservations because it makes those reservations feasible.
-    if (storageTarget) {
+    let storageTarget = storageExpansionTarget(state, demand);
+    while (storageTarget) {
       if (settings.crafting && craftMissingFor(storageTarget.cost, state, {})) return;
-      if (affordable(storageTarget.cost, state, {}) && invoke('build', storageTarget.id)) return;
+      if (affordable(storageTarget.cost, state, {})) {
+        if (queueBuilding(storageTarget.id, state)) return;
+        if (impossibleBuildingCosts[storageTarget.id]) {
+          storageTarget = storageExpansionTarget(state, demand);
+          continue;
+        }
+      }
 
       // Do not spend the scarce stock on unrelated construction while an
       // available storage building is the only path to completing the queue.
@@ -1864,7 +1883,7 @@
       // buildings that are already affordable from being considered this pass.
       if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
       if (affordable(cost, state, demand)) {
-        if (invoke('build', id)) return;
+        if (queueBuilding(id, state)) return;
       }
     }
   }
