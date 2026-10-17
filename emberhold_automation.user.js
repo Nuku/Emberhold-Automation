@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.44
+// @version      1.36.46
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2321,6 +2321,23 @@
       typeof entry.id === 'string' && entry.id.startsWith(prefix));
   }
 
+  function wonderResearchQueued(state, index) {
+    const landing = state.landing;
+    return (state.queues?.research || []).some(entry => {
+      const id = String(entry?.id || '');
+      const kind = String(entry?.type || entry?.kind || '');
+      const queuedLanding = entry?.landing ?? entry?.wonderId ?? entry?.landingId;
+      const queuedIndex = entry?.index ?? entry?.section ?? entry?.researchIndex ?? entry?.wonderIndex;
+      if (/wonder.?research/i.test(kind) && Number(queuedIndex) === index &&
+          (!queuedLanding || queuedLanding === landing)) return true;
+      return [
+        `wonderResearch:${landing}:${index}`,
+        `wonder:${landing}:research:${index}`,
+        `${landing}:wonderResearch:${index}`,
+      ].includes(id);
+    });
+  }
+
   function prioritizeWonderObstacle(state) {
     const queue = state.queues?.build || [];
     const index = queue.findIndex(entry =>
@@ -2402,7 +2419,8 @@
     // public automation API. Rapture staffing is already available today.
     if (api().actions?.wonderResearch) {
       for (let index = 0; index <= section; index++) {
-        if (!record.researches?.[index] && invoke('wonderResearch', index)) return;
+        if (!record.researches?.[index] && !wonderResearchQueued(state, index) &&
+            invoke('wonderResearch', index)) return;
       }
     }
     if (api().actions?.wonderExpedition) {
