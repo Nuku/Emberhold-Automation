@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.49
+// @version      1.36.50
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -502,14 +502,27 @@
     for (const entry of state.queues?.build || []) {
       const def = queueDefinition('build', entry?.id);
       const cost = def && queueCost('build', entry);
-      if (!def || !cost || !storageCannotFit(cost)) continue;
-      if (JSON.stringify(impossibleBuildingCosts[def.id]) !== JSON.stringify(cost)) {
-        impossibleBuildingCosts[def.id] = cost;
+      const name = def?.name || def?.id;
+      const row = name && [...(document.getElementById('queue-build')?.querySelectorAll('button') || [])]
+        .find(button => button.textContent.includes(name));
+      const visiblyImpossible = /Cannot be completed: exceeds storage capacity/i.test(row?.textContent || '');
+      if (!def || !((cost && storageCannotFit(cost)) || visiblyImpossible)) continue;
+      const capacityOf = api().helpers?.capacityOf;
+      const resources = Object.keys(cost || def.cost || {});
+      const capacities = Object.fromEntries(resources.map(resource => [resource,
+        Number(typeof capacityOf === 'function' ? capacityOf(resource) : NaN)])
+        .filter(([, capacity]) => Number.isFinite(capacity)));
+      if (JSON.stringify(impossibleBuildingCosts[def.id]?.capacities) !== JSON.stringify(capacities)) {
+        impossibleBuildingCosts[def.id] = { capacities };
         changed = true;
       }
     }
-    for (const [id, cost] of Object.entries(impossibleBuildingCosts)) {
-      if (!storageCannotFit(cost)) {
+    for (const [id, memory] of Object.entries(impossibleBuildingCosts)) {
+      const capacities = memory?.capacities;
+      const capacityOf = api().helpers?.capacityOf;
+      const unchanged = capacities && Object.entries(capacities).every(([resource, previous]) =>
+        typeof capacityOf === 'function' && Number(capacityOf(resource)) === Number(previous));
+      if (!unchanged) {
         delete impossibleBuildingCosts[id];
         changed = true;
       }
@@ -1845,7 +1858,7 @@
       if (canBuild ? !canBuild(id) :
         (state.trial?.id === 'overflow' && ['storehouse', 'deepStore', 'vault'].includes(id))) continue;
       const cost = prospectiveBuildingCost(def);
-      if (storageCannotFit(cost) || storageCannotFit(impossibleBuildingCosts[id])) continue;
+      if (storageCannotFit(cost) || impossibleBuildingCosts[id]) continue;
       // Supplying one building's missing dependency must not prevent later
       // buildings that are already affordable from being considered this pass.
       if (settings.crafting && craftMissingFor(cost, state, demand)) continue;
