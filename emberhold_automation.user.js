@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.46
+// @version      1.36.47
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2316,9 +2316,15 @@
   }
 
   function wonderObstacleQueued(state) {
-    const prefix = `wonderObstacle:${state.landing}:`;
-    return (state.queues?.build || []).some(entry =>
-      typeof entry.id === 'string' && entry.id.startsWith(prefix));
+    return (state.queues?.build || []).some(entry => isWonderObstacleEntry(entry, state.landing));
+  }
+
+  function isWonderObstacleEntry(entry, landing) {
+    const id = String(entry?.id || '');
+    const kind = String(entry?.type || entry?.kind || '');
+    if (!/wonder.?obstacle/i.test(`${id} ${kind}`)) return false;
+    const queuedLanding = entry?.landing ?? entry?.wonderId ?? entry?.landingId;
+    return !queuedLanding || queuedLanding === landing || id.includes(`:${landing}:`);
   }
 
   function wonderResearchQueued(state, index) {
@@ -2340,8 +2346,7 @@
 
   function prioritizeWonderObstacle(state) {
     const queue = state.queues?.build || [];
-    const index = queue.findIndex(entry =>
-      typeof entry.id === 'string' && entry.id.startsWith(`wonderObstacle:${state.landing}:`));
+    const index = queue.findIndex(entry => isWonderObstacleEntry(entry, state.landing));
     if (index <= 0) return;
     const id = queue[index].id;
     const actions = api().actions || {};
