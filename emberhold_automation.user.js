@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Emberhold Automation
 // @namespace    https://github.com/emberhold
-// @version      1.36.53
+// @version      1.36.55
 // @description  Configurable automation for Emberhold
 // @updateURL    https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nuku/Emberhold-Automation/main/emberhold_automation.user.js
@@ -2168,10 +2168,10 @@
     return likelyWin || null;
   }
 
-  function bestAttackPlan(id, state, demand, limits) {
+  function bestAttackPlan(id, state, demand, limits, allowRaid = true) {
     // Higher stages buy better loot, so choose the strongest affordable stage
     // that still has a modeled likely win. Count is minimized within that stage.
-    for (let index = COMBAT_STAGES.length - 1; index >= 0; index--) {
+    for (let index = COMBAT_STAGES.length - 1; index >= (allowRaid ? 0 : 1); index--) {
       const stage = COMBAT_STAGES[index];
       if (!affordable(stage.cost, state, demand)) continue;
       const plan = minimumWinningCount((target, count) =>
@@ -2201,6 +2201,8 @@
 
   function autoCombat(state, demand = {}) {
     if (!settings.combat) return;
+    // Keep resources for an eligible Wonder discovery by avoiding raids.
+    const allowRaid = !Object.keys(pendingWonderDemand(state)).length;
     const enemies = combatContacts(state);
     if (!enemies.length) return;
 
@@ -2261,6 +2263,7 @@
       if (!target) return;
       if (!Number.isFinite(knownEnemyAttack(target[1]))) {
         const stage = COMBAT_STAGES[0];
+        if (!allowRaid) return;
         if (limits.healthy >= limits.minimum && affordable(stage.cost, state, demand)) {
           const action = combatAction(['attack'], target[0], stage.id,
             escalatedAttackCount(limits.minimum, limits));
@@ -2268,7 +2271,7 @@
         }
         return;
       }
-      const plan = bestAttackPlan(target[0], state, demand, limits);
+      const plan = bestAttackPlan(target[0], state, demand, limits, allowRaid);
       if (plan) {
         const action = combatAction(['attack'], target[0], plan.stage,
           escalatedAttackCount(plan.count, limits));
@@ -2284,7 +2287,10 @@
     }
 
     const target = chooseCombatTarget(enemies);
-    if (target) combatAction(['attack', 'attackNation', 'invade'], target[0], attackSize(state, target[1], healthy));
+    if (target && allowRaid) {
+      combatAction(['attack', 'attackNation', 'invade'], target[0],
+        attackSize(state, target[1], healthy));
+    }
   }
 
   function wonderFindCost(def, state) {
